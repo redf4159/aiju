@@ -1,0 +1,440 @@
+{
+  "episode": 1,
+  "title": "黑色裂缝",
+  "script_md": "《冰境》EP01《黑色裂缝》·约60秒·10镜·东方玄幻史诗。\n结构：现实王城→梦境预兆→裂缝与黑影→惊醒→现实裂缝降临。\n制作链：分镜静帧（still_prompt）→ MiniMax H3 图生视频（motion 英文）→ 单镜 TTS/环境声 → 整集剪辑。",
+  "storyboard_md": "01冰境王城 02暴雪王宫 03冰原上的凌川 04黑色雪花 05黑色神殿 06黑色裂缝 07凌川靠近裂缝 08神秘黑影 09凌川惊醒 10现实的黑色裂缝",
+  "synopsis": "冰雪王国中，王子凌川反复梦见黑色神殿与天际裂缝，以及神秘黑影的低语。当他在现实中推开窗户，裂缝竟真的出现在王城上空。",
+  "character_bible": "凌川：20多岁东方王子，黑长发，深色王族礼服，写实电影脸，全剧一致。神秘黑影：裂缝内人形轮廓，无五官。玄清长老/侍卫：第二集起用。",
+  "voice_cast": [
+    {
+      "role": "旁白",
+      "tts_voice": "onyx",
+      "voice_desc": "男性电影预告片式旁白，沉稳低沉。TTS:onyx",
+      "emotion": "史诗、神秘",
+      "scope": "series"
+    },
+    {
+      "role": "凌川",
+      "tts_voice": "echo",
+      "voice_desc": "年轻男性，偏低沉干净有磁性。TTS:echo",
+      "emotion": "疑惑、恐惧、震惊、决断",
+      "scope": "series"
+    },
+    {
+      "role": "神秘黑影",
+      "tts_voice": "onyx",
+      "voice_desc": "极低沉男性，空灵遥远，大空间混响。TTS:onyx",
+      "emotion": "神秘、压迫",
+      "scope": "series"
+    },
+    {
+      "role": "玄清长老",
+      "tts_voice": "onyx",
+      "voice_desc": "年迈男性，沙哑而庄重，语速慢。TTS:onyx",
+      "emotion": "忧虑、敬畏",
+      "scope": "series"
+    },
+    {
+      "role": "侍卫",
+      "tts_voice": "echo",
+      "voice_desc": "青年男性武士，简短有力。TTS:echo",
+      "emotion": "紧张",
+      "scope": "series"
+    }
+  ],
+  "characters": [
+    {
+      "name": "旁白",
+      "role_note": "全剧画外叙述，不对口型",
+      "visual_prompt": "无画面形象，仅声音",
+      "tts_voice": "onyx",
+      "voice_desc": "男性电影预告片式旁白，沉稳低沉"
+    },
+    {
+      "name": "凌川",
+      "role_note": "冰境王国年轻王子，主线视角",
+      "visual_prompt": "20多岁东方男性王子，黑长发束部分发冠，深色东方玄幻王族长礼服与暗金纹饰，写实电影脸，五官端正，肤质自然，偏冷峻；全剧同一脸型发型服装，禁止换脸",
+      "tts_voice": "echo",
+      "voice_desc": "年轻男性，偏低沉干净有磁性"
+    },
+    {
+      "name": "神秘黑影",
+      "role_note": "裂缝中的超自然存在",
+      "visual_prompt": "人形轮廓由黑暗能量构成，无可见五官，边缘呈烟雾状，体型略高于常人，裂缝内逆光剪影，禁止清晰人脸",
+      "tts_voice": "onyx",
+      "voice_desc": "极低沉男性，大空间混响"
+    },
+    {
+      "name": "玄清长老",
+      "role_note": "王国祭司长老",
+      "visual_prompt": "60岁左右东方长者，灰白长发，深蓝绣银纹祭司长袍，持冰晶法杖，皱纹清晰，真人写实",
+      "tts_voice": "onyx",
+      "voice_desc": "年迈男性，沙哑庄重"
+    },
+    {
+      "name": "侍卫",
+      "role_note": "王宫武士，群像时可虚化",
+      "visual_prompt": "青年东方武士，冰甲轻铠，面部在远景中可略虚化",
+      "tts_voice": "echo",
+      "voice_desc": "青年男性，简短有力"
+    }
+  ],
+  "scenes": [
+    {
+      "code": "SC-01",
+      "name": "冰境王城远景",
+      "visual_prompt": "无尽雪原上的巨大冰雪王城，中央冰晶城堡，远山阴云暴雪"
+    },
+    {
+      "code": "SC-02",
+      "name": "冰晶王宫长廊",
+      "visual_prompt": "巨大冰柱长廊，烛火与冷暖对比，地面反光"
+    },
+    {
+      "code": "SC-03",
+      "name": "梦境冰原",
+      "visual_prompt": "无边冰原，苍白天空，远方雪山，强风"
+    },
+    {
+      "code": "SC-04",
+      "name": "梦境·黑神殿",
+      "visual_prompt": "残破黑色巨石神殿从冰原升起，暴风雪"
+    },
+    {
+      "code": "SC-05",
+      "name": "梦境·天际裂缝",
+      "visual_prompt": "神殿上空巨大黑色空间裂缝，暗能量，雪向上飞卷"
+    },
+    {
+      "code": "SC-06",
+      "name": "凌川寝殿",
+      "visual_prompt": "古代王室卧室，月光透窗，木质与冰饰结合"
+    },
+    {
+      "code": "SC-07",
+      "name": "现实·王宫露台",
+      "visual_prompt": "王宫高窗/露台，可俯瞰王城夜空与裂缝"
+    }
+  ],
+  "production": {
+    "target_duration_sec": 60,
+    "aspect_ratio": "16:9",
+    "resolution": "640x360",
+    "color_grade": "冷蓝冰雪基调；梦境略去饱和；裂缝场景加青黑与高对比",
+    "music_brief": "低频弦乐+冰晶打击乐；裂缝段加入失真合成器铺底",
+    "edit_brief": "镜间硬切为主；梦现实切换可用短白闪或风声音桥"
+  },
+  "audio_design": {
+    "dialogue_language": "zh-CN",
+    "narrator": "画外 onyx，全程不对口型",
+    "ambience_policy": "每镜 ambience 英文关键词供混音检索；环境镜可纯 SFX",
+    "reverb": {
+      "神秘黑影": "大空间 hall 混响 40% wet"
+    }
+  },
+  "style_prefix": "东方玄幻史诗电影，冰雪世界，横屏16比9，真人写实电影摄影，体积光与暴雪，画面无文字无字幕无Logo，单镜全屏连续实拍感",
+  "visual_style": "Epic eastern fantasy cinema, realistic humans, ice and snow kingdom, dramatic lighting, 16:9 widescreen, no on-screen text",
+  "audio_sync": {
+    "mouth_lag_sec": 0.6,
+    "drift_per_shot_sec": 0.12
+  },
+  "shots": [
+    {
+      "id": 1,
+      "duration_sec": 6,
+      "title": "冰境王城",
+      "scene_code": "SC-01",
+      "scene": "横屏16比9。史诗环境定场（无人物、无主角）：无尽雪原上的巨大冰雪王城，中央冰晶城堡，远山覆雪，阴云压顶，暴雪缓缓飘落，神秘庄严。",
+      "visual": "横屏16比9。史诗环境定场（无人物、无主角）：无尽雪原上的巨大冰雪王城，中央冰晶城堡，远山覆雪，阴云压顶，暴雪缓缓飘落，神秘庄严。",
+      "continuity": "横屏16比9。史诗环境定场（无人物、无主角）：无尽雪原上的巨大冰雪王城，中央冰晶城堡，远山覆雪，阴云压顶，暴雪缓缓飘落，神秘庄严。",
+      "camera": "超广角大全景，慢速推轨，地平线水平，24fps",
+      "lighting": "阴云冷蓝顶光，城堡暖窗点光，体积雪雾",
+      "motion": "Epic cinematic fantasy establishing shot, NO people NO hero NO prince in frame, only architecture and landscape, ancient kingdom in snow and ice, enormous ice castle, distant mountains, heavy clouds, endless snowfall, slow dolly forward, 24fps, no text.",
+      "performance": "无人物出镜；旁白画外，出镜者嘴唇闭合。雪与环境粒子缓慢飘动。",
+      "ambience": "Soft winter wind, distant snowstorm, gentle air, 暴雪风雪",
+      "sfx": "远风低鸣，极轻钟鸣尾音（无电流无嗡鸣）",
+      "characters_in_shot": [],
+      "still_prompt": "静态分镜概念图，单镜头全屏电影画面，横屏16比9。史诗环境定场（无人物、无主角）：无尽雪原上的巨大冰雪王城，中央冰晶城堡，远山覆雪，阴云压顶，暴雪缓缓飘落，神秘庄严。",
+      "still_negative": "动漫, 卡通, 文字, 水印, 畸形脸, 多余手指, 白发王子, 银发, 刃雪城, 樱空释, 卡索, anime, subtitle, logo, deformed face, extra fingers, 人物特写, 王子, 人像, hero portrait",
+      "voices": [
+        {
+          "role": "旁白",
+          "text": "很久以前，在世界的尽头，有一座被冰雪覆盖的王国。",
+          "start_sec": 0.8,
+          "tts_voice": "onyx",
+          "voice_desc": "男性电影预告片式旁白，沉稳低沉。TTS:onyx 情绪：史诗、神秘。",
+          "emotion": "史诗、神秘"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "duration_sec": 5,
+      "title": "暴雪王宫",
+      "scene_code": "SC-02",
+      "scene": "横屏16比9。巨大冰晶宫殿长廊，冰柱与烛火冷暖对比；主角凌川（20多岁、黑长发、深色王族礼服）独自站在长廊尽头，全片同一脸型。",
+      "visual": "横屏16比9。巨大冰晶宫殿长廊，冰柱与烛火冷暖对比；主角凌川（20多岁、黑长发、深色王族礼服）独自站在长廊尽头，全片同一脸型。",
+      "continuity": "紧接王城空镜，进入同一王城内部；凌川服装与全剧一致。",
+      "camera": "中远景侧轨，缓慢横移，浅景深",
+      "lighting": "烛火暖色与冰墙冷蓝对比",
+      "motion": "Young male prince Ling Chuan, 20s, long black hair, dark eastern fantasy royal robe, SAME face and costume as entire series, standing alone in gigantic ice palace corridor, crystalline pillars, candlelight, slow tracking shot, realistic cinema, no text.",
+      "performance": "凌川静止伫立，微呼吸；无对白口型。",
+      "ambience": "Quiet palace hall, wind through ice corridor, candle room tone, 王宫长廊殿内混响, hall chamber",
+      "sfx": "衣摆轻响，烛火噼啪，持续环境底噪",
+      "characters_in_shot": [
+        "凌川"
+      ],
+      "still_prompt": "静态分镜概念图，单镜头全屏电影画面，横屏16比9。巨大冰晶宫殿长廊，冰柱与烛火冷暖对比；主角凌川（20多岁、黑长发、深色王族礼服）独自站在长廊尽头，全片同一脸型。",
+      "still_negative": "动漫, 卡通, 文字, 水印, 畸形脸, 多余手指, 白发王子, 银发, 刃雪城, 樱空释, 卡索, anime, subtitle, logo, deformed face, extra fingers",
+      "voices": [
+        {
+          "role": "凌川",
+          "text": "",
+          "note": "本镜无对白，仅表演/环境",
+          "tts_voice": "echo",
+          "voice_desc": "年轻男性，偏低沉干净有磁性。TTS:echo",
+          "emotion": "疑惑、恐惧、震惊"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "duration_sec": 6,
+      "title": "冰原上的凌川",
+      "scene_code": "SC-03",
+      "scene": "横屏16比9。梦境：无边冰原，凌川独自站立，远方雪山，苍白天空，孤独神秘。",
+      "visual": "横屏16比9。梦境：无边冰原，凌川独自站立，远方雪山，苍白天空，孤独神秘。",
+      "continuity": "横屏16比9。梦境：无边冰原，凌川独自站立，远方雪山，苍白天空，孤独神秘。",
+      "camera": "广角远景，轻微手持感漂移",
+      "lighting": "高调灰白梦境光，边缘略过曝",
+      "motion": "Young prince Ling Chuan alone on endless frozen wasteland, black hair in strong wind, dark robe, distant snow mountains, pale sky, cinematic wide shot, slow camera drift, realistic, SAME Ling Chuan face, no text.",
+      "performance": "迎风站立；旁白画外，凌川口型不动。",
+      "ambience": "Strong cold wind, low-frequency atmosphere",
+      "sfx": "",
+      "characters_in_shot": [
+        "凌川"
+      ],
+      "still_prompt": "静态分镜概念图，单镜头全屏电影画面，横屏16比9。梦境：无边冰原，凌川独自站立，远方雪山，苍白天空，孤独神秘。",
+      "still_negative": "动漫, 卡通, 文字, 水印, 畸形脸, 多余手指, 白发王子, 银发, 刃雪城, 樱空释, 卡索, anime, subtitle, logo, deformed face, extra fingers",
+      "voices": [
+        {
+          "role": "旁白",
+          "text": "年轻的王子凌川，却从小被一个相同的噩梦纠缠。",
+          "start_sec": 0.6,
+          "tts_voice": "onyx",
+          "voice_desc": "男性电影预告片式旁白，沉稳低沉。TTS:onyx",
+          "emotion": "史诗、神秘"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "duration_sec": 5,
+      "title": "黑色雪花",
+      "scene_code": "SC-03",
+      "scene": "横屏16比9。特写：白雪中几片黑色雪花飘落，一片落在凌川手背并化为 dark smoke。",
+      "visual": "横屏16比9。特写：白雪中几片黑色雪花飘落，一片落在凌川手背并化为 dark smoke。",
+      "continuity": "横屏16比9。特写：白雪中几片黑色雪花飘落，一片落在凌川手背并化为 dark smoke。",
+      "camera": "微距特写，浅景深",
+      "lighting": "冷侧光，黑色雪花高对比",
+      "motion": "Extreme close-up black snowflakes among white snow, one lands on Ling Chuan hand, melts into dark smoke, shallow DOF, eastern dark fantasy, realistic texture, no text.",
+      "performance": "手部微颤；无台词口型。",
+      "ambience": "Close icy wind, subtle supernatural vibration",
+      "sfx": "",
+      "characters_in_shot": [
+        "凌川（手）"
+      ],
+      "still_prompt": "静态分镜概念图，单镜头全屏电影画面，横屏16比9。特写：白雪中几片黑色雪花飘落，一片落在凌川手背并化为 dark smoke。",
+      "still_negative": "动漫, 卡通, 文字, 水印, 畸形脸, 多余手指, 白发王子, 银发, 刃雪城, 樱空释, 卡索, anime, subtitle, logo, deformed face, extra fingers",
+      "voices": [
+        {
+          "role": "凌川",
+          "text": "",
+          "note": "本镜无对白",
+          "tts_voice": "echo",
+          "voice_desc": "TTS:echo",
+          "emotion": "疑惑"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "duration_sec": 7,
+      "title": "黑色神殿",
+      "scene_code": "SC-04",
+      "scene": "横屏16比9。凌川抬头，远景巨大残破黑色神殿从冰原中显现，凌川在前景渺小。",
+      "visual": "横屏16比9。凌川抬头，远景巨大残破黑色神殿从冰原中显现，凌川在前景渺小。",
+      "continuity": "横屏16比9。凌川抬头，远景巨大残破黑色神殿从冰原中显现，凌川在前景渺小。",
+      "camera": "低角度广角，缓慢 tilt up",
+      "lighting": "",
+      "motion": "Massive ruined black temple emerging from frozen wasteland, snowstorm, tiny Ling Chuan in foreground looking up, epic scale, volumetric fog, no text.",
+      "performance": "凌川仰望，身体前倾；无对白。",
+      "ambience": "Deep rumble, powerful wind, mysterious resonance",
+      "sfx": "",
+      "characters_in_shot": [
+        "凌川"
+      ],
+      "still_prompt": "静态分镜概念图，单镜头全屏电影画面，横屏16比9。凌川抬头，远景巨大残破黑色神殿从冰原中显现，凌川在前景渺小。",
+      "still_negative": "动漫, 卡通, 文字, 水印, 畸形脸, 多余手指, 白发王子, 银发, 刃雪城, 樱空释, 卡索, anime, subtitle, logo, deformed face, extra fingers",
+      "voices": [
+        {
+          "role": "凌川",
+          "text": "",
+          "note": "无对白",
+          "tts_voice": "echo",
+          "voice_desc": "TTS:echo",
+          "emotion": "恐惧"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "duration_sec": 6,
+      "title": "黑色裂缝",
+      "scene_code": "SC-05",
+      "scene": "横屏16比9。神殿上空巨大黑色空间裂缝打开，暗能量扩散，雪向上飞卷，末世感。",
+      "visual": "横屏16比9。神殿上空巨大黑色空间裂缝打开，暗能量扩散，雪向上飞卷，末世感。",
+      "continuity": "横屏16比9。神殿上空巨大黑色空间裂缝打开，暗能量扩散，雪向上飞卷，末世感。",
+      "camera": "急速 tilt up 至裂缝中心",
+      "lighting": "",
+      "motion": "Gigantic black dimensional crack opening above ruined black temple, dark energy, clouds distorted, snow blowing upward, apocalyptic scale, tilt up, VFX realistic, no text.",
+      "performance": "无人物特写；纯环境剧变。",
+      "ambience": "Deep dimensional rumble, distorted wind, energy surge",
+      "sfx": "空间撕裂低频，风反向呼啸",
+      "characters_in_shot": [],
+      "still_prompt": "静态分镜概念图，单镜头全屏电影画面，横屏16比9。神殿上空巨大黑色空间裂缝打开，暗能量扩散，雪向上飞卷，末世感。",
+      "still_negative": "动漫, 卡通, 文字, 水印, 畸形脸, 多余手指, 白发王子, 银发, 刃雪城, 樱空释, 卡索, anime, subtitle, logo, deformed face, extra fingers",
+      "voices": [
+        {
+          "role": "环境",
+          "text": "",
+          "note": "纯 SFX，无 TTS",
+          "tts_voice": "",
+          "voice_desc": "不用 TTS",
+          "emotion": ""
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "duration_sec": 6,
+      "title": "凌川靠近裂缝",
+      "scene_code": "SC-05",
+      "scene": "横屏16比9。背跟拍凌川走向天际裂缝，黑袍长发在风中剧烈飘动，身后黑色神殿。",
+      "visual": "横屏16比9。背跟拍凌川走向天际裂缝，黑袍长发在风中剧烈飘动，身后黑色神殿。",
+      "continuity": "横屏16比9。背跟拍凌川走向天际裂缝，黑袍长发在风中剧烈飘动，身后黑色神殿。",
+      "camera": "背跟中景，稳定器，风速感强",
+      "lighting": "",
+      "motion": "Rear tracking shot Ling Chuan walking toward black crack in sky, robe and hair in violent wind, snow swirl, temple behind, epic fantasy cinema, realistic gait, no text.",
+      "performance": "缓步前行；约1.0秒起低声台词，口型与「又是这个梦……」同步。",
+      "ambience": "Strong wind, snow swirl, low rumble",
+      "sfx": "",
+      "characters_in_shot": [
+        "凌川"
+      ],
+      "still_prompt": "静态分镜概念图，单镜头全屏电影画面，横屏16比9。背跟拍凌川走向天际裂缝，黑袍长发在风中剧烈飘动，身后黑色神殿。",
+      "still_negative": "动漫, 卡通, 文字, 水印, 畸形脸, 多余手指, 白发王子, 银发, 刃雪城, 樱空释, 卡索, anime, subtitle, logo, deformed face, extra fingers",
+      "voices": [
+        {
+          "role": "凌川",
+          "text": "又是这个梦……",
+          "start_sec": 1.0,
+          "tts_voice": "echo",
+          "voice_desc": "TTS:echo 情绪：疲惫、恐惧",
+          "emotion": "疲惫、恐惧"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "duration_sec": 7,
+      "title": "神秘黑影",
+      "scene_code": "SC-05",
+      "scene": "横屏16比9。裂缝内模糊人形黑影，无五官，凌川在下方仰望恐惧。",
+      "visual": "横屏16比9。裂缝内模糊人形黑影，无五官，凌川在下方仰望恐惧。",
+      "continuity": "横屏16比9。裂缝内模糊人形黑影，无五官，凌川在下方仰望恐惧。",
+      "camera": "低角度仰拍，凌川前景剪影",
+      "lighting": "",
+      "motion": "Mysterious humanoid shadow inside black crack, no facial features, dark energy, Ling Chuan below looking up in fear, slow reveal, cinematic lighting, no text.",
+      "performance": "黑影缓慢显现；凌川仰头闭口；约1.2秒黑影台词，混响，口型不动。",
+      "ambience": "Huge spatial reverb bed, deep resonance",
+      "sfx": "",
+      "characters_in_shot": [
+        "凌川",
+        "神秘黑影"
+      ],
+      "still_prompt": "静态分镜概念图，单镜头全屏电影画面，横屏16比9。裂缝内模糊人形黑影，无五官，凌川在下方仰望恐惧。",
+      "still_negative": "动漫, 卡通, 文字, 水印, 畸形脸, 多余手指, 白发王子, 银发, 刃雪城, 樱空释, 卡索, anime, subtitle, logo, deformed face, extra fingers",
+      "voices": [
+        {
+          "role": "神秘黑影",
+          "text": "你终于……回来了。",
+          "start_sec": 1.2,
+          "tts_voice": "onyx",
+          "voice_desc": "极低沉，大空间混响。TTS:onyx",
+          "emotion": "神秘、压迫"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "duration_sec": 6,
+      "title": "凌川惊醒",
+      "scene_code": "SC-06",
+      "scene": "横屏16比9。凌川从噩梦中猛然坐起，冷汗，古代王室卧室内月光透窗，恐惧表情。",
+      "visual": "横屏16比9。凌川从噩梦中猛然坐起，冷汗，古代王室卧室内月光透窗，恐惧表情。",
+      "continuity": "从梦境切回现实，同一凌川脸型。",
+      "camera": "近景，轻微 push in",
+      "lighting": "月光冷蓝，面部半阴影",
+      "motion": "Ling Chuan waking up violently in dark royal bedroom, cold sweat, moonlight through window, frightened expression, SAME face, dramatic close-up, eastern fantasy, no text.",
+      "performance": "惊醒、急促呼吸；无长台词口型。",
+      "ambience": "Heavy breathing, heartbeat, quiet room tone",
+      "sfx": "",
+      "characters_in_shot": [
+        "凌川"
+      ],
+      "still_prompt": "静态分镜概念图，单镜头全屏电影画面，横屏16比9。凌川从噩梦中猛然坐起，冷汗，古代王室卧室内月光透窗，恐惧表情。",
+      "still_negative": "动漫, 卡通, 文字, 水印, 畸形脸, 多余手指, 白发王子, 银发, 刃雪城, 樱空释, 卡索, anime, subtitle, logo, deformed face, extra fingers",
+      "voices": [
+        {
+          "role": "凌川",
+          "text": "",
+          "note": "喘息与环境",
+          "tts_voice": "echo",
+          "voice_desc": "TTS:echo",
+          "emotion": "惊恐"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "duration_sec": 6,
+      "title": "现实的黑色裂缝",
+      "scene_code": "SC-07",
+      "scene": "横屏16比9。凌川推窗望向夜空，真实世界出现巨大黑色裂缝，闪电照云，镜头后拉揭示规模，结尾渐黑。",
+      "visual": "横屏16比9。凌川推窗望向夜空，真实世界出现巨大黑色裂缝，闪电照云，镜头后拉揭示规模，结尾渐黑。",
+      "continuity": "横屏16比9。凌川推窗望向夜空，真实世界出现巨大黑色裂缝，闪电照云，镜头后拉揭示规模，结尾渐黑。",
+      "camera": "由中景 slow dolly back 至大全景",
+      "lighting": "",
+      "motion": "Ling Chuan at palace window in shock, enormous black crack in real night sky over frozen kingdom, lightning, snow on palace, slow pull back reveal, epic ending, fade to black hint, no text.",
+      "performance": "约1.0秒起台词口型：「不……它真的来了。」",
+      "ambience": "Massive low rumble, storm, fade to black",
+      "sfx": "",
+      "characters_in_shot": [
+        "凌川"
+      ],
+      "still_prompt": "静态分镜概念图，单镜头全屏电影画面，横屏16比9。凌川推窗望向夜空，真实世界出现巨大黑色裂缝，闪电照云，镜头后拉揭示规模，结尾渐黑。",
+      "still_negative": "动漫, 卡通, 文字, 水印, 畸形脸, 多余手指, 白发王子, 银发, 刃雪城, 樱空释, 卡索, anime, subtitle, logo, deformed face, extra fingers",
+      "voices": [
+        {
+          "role": "凌川",
+          "text": "不……它真的来了。",
+          "start_sec": 1.0,
+          "tts_voice": "echo",
+          "voice_desc": "TTS:echo 情绪：震惊",
+          "emotion": "震惊"
+        }
+      ]
+    }
+  ]
+}

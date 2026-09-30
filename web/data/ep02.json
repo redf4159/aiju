@@ -1,0 +1,453 @@
+{
+  "episode": 2,
+  "title": "黑雪临城",
+  "script_md": "《冰境》EP02《黑雪临城》·约60秒·10镜。\n承接 EP01 现实裂缝：王城危机、长老示警、黑影再语、凌川发现冰符秘密，裂缝二次扩张。\n制作要求同 EP01；群像镜保持脸小虚化。",
+  "storyboard_md": "01裂缝悬城 02凌川望天 03急报 04奔往议事殿 05长老警示 06黑雪满城 07登墙 08黑影再现 09握紧冰符 10裂缝扩张",
+  "synopsis": "裂缝悬停王城，黑雪落城。玄清长老警告「天裂」之祸，神秘黑影称凌川为「钥匙」。凌川意识到父王所留冰符与裂缝同源，裂缝再度扩张，王城陷入紧急戒严。",
+  "character_bible": "凌川/神秘黑影/旁白：与 EP01 完全一致。玄清长老：灰发深蓝祭袍，60岁写实脸。侍卫：冰甲青年。",
+  "voice_cast": [
+    {
+      "role": "旁白",
+      "tts_voice": "onyx",
+      "voice_desc": "男性电影预告片式旁白，沉稳低沉。TTS:onyx",
+      "emotion": "史诗、神秘",
+      "scope": "series"
+    },
+    {
+      "role": "凌川",
+      "tts_voice": "echo",
+      "voice_desc": "年轻男性，偏低沉干净有磁性。TTS:echo",
+      "emotion": "疑惑、恐惧、震惊、决断",
+      "scope": "series"
+    },
+    {
+      "role": "神秘黑影",
+      "tts_voice": "onyx",
+      "voice_desc": "极低沉男性，空灵遥远，大空间混响。TTS:onyx",
+      "emotion": "神秘、压迫",
+      "scope": "series"
+    },
+    {
+      "role": "玄清长老",
+      "tts_voice": "onyx",
+      "voice_desc": "年迈男性，沙哑而庄重，语速慢。TTS:onyx",
+      "emotion": "忧虑、敬畏",
+      "scope": "series"
+    },
+    {
+      "role": "侍卫",
+      "tts_voice": "echo",
+      "voice_desc": "青年男性武士，简短有力。TTS:echo",
+      "emotion": "紧张",
+      "scope": "series"
+    }
+  ],
+  "characters": [
+    {
+      "name": "旁白",
+      "role_note": "全剧画外叙述，不对口型",
+      "visual_prompt": "无画面形象，仅声音",
+      "tts_voice": "onyx",
+      "voice_desc": "男性电影预告片式旁白，沉稳低沉"
+    },
+    {
+      "name": "凌川",
+      "role_note": "冰境王国年轻王子，主线视角",
+      "visual_prompt": "20多岁东方男性王子，黑长发束部分发冠，深色东方玄幻王族长礼服与暗金纹饰，写实电影脸，五官端正，肤质自然，偏冷峻；全剧同一脸型发型服装，禁止换脸",
+      "tts_voice": "echo",
+      "voice_desc": "年轻男性，偏低沉干净有磁性"
+    },
+    {
+      "name": "神秘黑影",
+      "role_note": "裂缝中的超自然存在",
+      "visual_prompt": "人形轮廓由黑暗能量构成，无可见五官，边缘呈烟雾状，体型略高于常人，裂缝内逆光剪影，禁止清晰人脸",
+      "tts_voice": "onyx",
+      "voice_desc": "极低沉男性，大空间混响"
+    },
+    {
+      "name": "玄清长老",
+      "role_note": "王国祭司长老",
+      "visual_prompt": "60岁左右东方长者，灰白长发，深蓝绣银纹祭司长袍，持冰晶法杖，皱纹清晰，真人写实",
+      "tts_voice": "onyx",
+      "voice_desc": "年迈男性，沙哑庄重"
+    },
+    {
+      "name": "侍卫",
+      "role_note": "王宫武士，群像时可虚化",
+      "visual_prompt": "青年东方武士，冰甲轻铠，面部在远景中可略虚化",
+      "tts_voice": "echo",
+      "voice_desc": "青年男性，简短有力"
+    }
+  ],
+  "scenes": [
+    {
+      "code": "SC-01",
+      "name": "冰境王城远景",
+      "visual_prompt": "无尽雪原上的巨大冰雪王城，中央冰晶城堡，远山阴云暴雪"
+    },
+    {
+      "code": "SC-02",
+      "name": "冰晶王宫长廊",
+      "visual_prompt": "巨大冰柱长廊，烛火与冷暖对比，地面反光"
+    },
+    {
+      "code": "SC-03",
+      "name": "梦境冰原",
+      "visual_prompt": "无边冰原，苍白天空，远方雪山，强风"
+    },
+    {
+      "code": "SC-04",
+      "name": "梦境·黑神殿",
+      "visual_prompt": "残破黑色巨石神殿从冰原升起，暴风雪"
+    },
+    {
+      "code": "SC-05",
+      "name": "梦境·天际裂缝",
+      "visual_prompt": "神殿上空巨大黑色空间裂缝，暗能量，雪向上飞卷"
+    },
+    {
+      "code": "SC-06",
+      "name": "凌川寝殿",
+      "visual_prompt": "古代王室卧室，月光透窗，木质与冰饰结合"
+    },
+    {
+      "code": "SC-07",
+      "name": "现实·王宫露台",
+      "visual_prompt": "王宫高窗/露台，可俯瞰王城夜空与裂缝"
+    },
+    {
+      "code": "SC-08",
+      "name": "议事冰殿",
+      "visual_prompt": "圆形冰壁议事厅，中央冰台，长老与王子"
+    },
+    {
+      "code": "SC-09",
+      "name": "王城街道",
+      "visual_prompt": "冰雪街道，民众仰望天空，黑雪飘落"
+    },
+    {
+      "code": "SC-10",
+      "name": "城墙与垛口",
+      "visual_prompt": "高墙俯瞰王城，裂缝占天空大半"
+    }
+  ],
+  "production": {
+    "target_duration_sec": 60,
+    "aspect_ratio": "16:9",
+    "resolution": "640x360",
+    "color_grade": "比 EP01 略压暗；黑雪场景降低中间调",
+    "music_brief": "延续 EP01 主题，加入紧急鼓点与钟鸣",
+    "edit_brief": "与 EP01 末镜可直接硬切；集末 rumble 可做下集声桥"
+  },
+  "audio_design": {
+    "dialogue_language": "zh-CN",
+    "narrator": "画外 onyx",
+    "crowd": "SC-09 无个体对白，仅环境人声 murmur",
+    "reverb": {
+      "神秘黑影": "hall 45% wet"
+    }
+  },
+  "style_prefix": "东方玄幻史诗电影，冰雪世界，横屏16比9，真人写实电影摄影，体积光与暴雪，画面无文字无字幕无Logo，单镜全屏连续实拍感",
+  "visual_style": "Epic eastern fantasy cinema, realistic humans, ice and snow kingdom, dramatic lighting, 16:9 widescreen, no on-screen text",
+  "audio_sync": {
+    "mouth_lag_sec": 0.6,
+    "drift_per_shot_sec": 0.12
+  },
+  "shots": [
+    {
+      "id": 1,
+      "duration_sec": 6,
+      "title": "裂缝悬城",
+      "scene_code": "SC-01",
+      "scene": "横屏16比9。史诗环境定场（无人物、无主角）：黎明前王城上空悬停巨大黑色裂缝，冰晶塔尖前景，城内零星灯火，暴雪转黑雪。",
+      "visual": "横屏16比9。史诗环境定场（无人物、无主角）：黎明前王城上空悬停巨大黑色裂缝，冰晶塔尖前景，城内零星灯火，暴雪转黑雪。",
+      "continuity": "横屏16比9。史诗环境定场（无人物、无主角）：黎明前王城上空悬停巨大黑色裂缝，冰晶塔尖前景，城内零星灯火，暴雪转黑雪。",
+      "camera": "航拍大全景，缓慢横移",
+      "lighting": "裂缝下缘暗红溢光，城市冷蓝",
+      "motion": "Epic establishing shot, NO people NO hero, black dimensional crack hovering above frozen capital, ice spires in foreground, few city lights, black snow falling, slow aerial drift, no text.",
+      "performance": "无人物；旁白画外。",
+      "ambience": "Distant alarms, low rumble, black snow hiss",
+      "sfx": "",
+      "characters_in_shot": [],
+      "still_prompt": "静态分镜概念图，单镜头全屏电影画面，横屏16比9。史诗环境定场（无人物、无主角）：黎明前王城上空悬停巨大黑色裂缝，冰晶塔尖前景，城内零星灯火，暴雪转黑雪。",
+      "still_negative": "动漫, 卡通, 文字, 水印, 畸形脸, 多余手指, 白发王子, 银发, 刃雪城, 樱空释, 卡索, anime, subtitle, logo, deformed face, extra fingers, 人物特写, 王子",
+      "voices": [
+        {
+          "role": "旁白",
+          "text": "那一夜之后，裂缝没有消失——它像一道伤口，悬在整个王城头顶。",
+          "start_sec": 0.7,
+          "tts_voice": "onyx",
+          "voice_desc": "TTS:onyx 史诗",
+          "emotion": "史诗、压迫"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "duration_sec": 5,
+      "title": "凌川望天",
+      "scene_code": "SC-07",
+      "scene": "横屏16比9。凌川立于昨夜同一高窗，侧脸映裂缝冷光，黑长发，深色礼服，眼下青黑，全片同一脸。",
+      "visual": "横屏16比9。凌川立于昨夜同一高窗，侧脸映裂缝冷光，黑长发，深色礼服，眼下青黑，全片同一脸。",
+      "continuity": "承接 EP01 末镜同一窗口与裂缝方向。",
+      "camera": "",
+      "lighting": "",
+      "motion": "Ling Chuan at palace window, profile lit by crack glow, exhausted eyes, SAME face and costume, looking up, snow on windowsill, cinematic medium shot, slow push, no text.",
+      "performance": "静止凝视；无对白。",
+      "ambience": "Wind, faint alarm bell",
+      "sfx": "",
+      "characters_in_shot": [
+        "凌川"
+      ],
+      "still_prompt": "静态分镜概念图，单镜头全屏电影画面，横屏16比9。凌川立于昨夜同一高窗，侧脸映裂缝冷光，黑长发，深色礼服，眼下青黑，全片同一脸。",
+      "still_negative": "动漫, 卡通, 文字, 水印, 畸形脸, 多余手指, 白发王子, 银发, 刃雪城, 樱空释, 卡索, anime, subtitle, logo, deformed face, extra fingers",
+      "voices": [
+        {
+          "role": "凌川",
+          "text": "",
+          "note": "无对白",
+          "tts_voice": "echo",
+          "voice_desc": "TTS:echo",
+          "emotion": "疲惫"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "duration_sec": 5,
+      "title": "急报",
+      "scene_code": "SC-02",
+      "scene": "横屏16比9。凌川转身，单膝跪地侍卫入画，冰甲，表情惊慌；长廊深处更多火把移动。",
+      "visual": "横屏16比9。凌川转身，单膝跪地侍卫入画，冰甲，表情惊慌；长廊深处更多火把移动。",
+      "continuity": "横屏16比9。凌川转身，单膝跪地侍卫入画，冰甲，表情惊慌；长廊深处更多火把移动。",
+      "camera": "中景双人，轻微 handheld",
+      "lighting": "",
+      "motion": "Guard kneeling in ice corridor reporting urgently, Ling Chuan turns, torches moving in depth, cinematic medium two-shot, realistic, no text.",
+      "performance": "侍卫约0.8秒台词；凌川闭口倾听。",
+      "ambience": "Corridor reverb, armor clink, urgent tone",
+      "sfx": "",
+      "characters_in_shot": [
+        "凌川",
+        "侍卫"
+      ],
+      "still_prompt": "静态分镜概念图，单镜头全屏电影画面，横屏16比9。凌川转身，单膝跪地侍卫入画，冰甲，表情惊慌；长廊深处更多火把移动。",
+      "still_negative": "动漫, 卡通, 文字, 水印, 畸形脸, 多余手指, 白发王子, 银发, 刃雪城, 樱空释, 卡索, anime, subtitle, logo, deformed face, extra fingers",
+      "voices": [
+        {
+          "role": "侍卫",
+          "text": "殿下！黑雪落城，祭坛冰纹全裂了！",
+          "start_sec": 0.8,
+          "tts_voice": "echo",
+          "voice_desc": "青年武士，紧张。TTS:echo",
+          "emotion": "紧张"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "duration_sec": 6,
+      "title": "奔往议事殿",
+      "scene_code": "SC-02",
+      "scene": "横屏16比9。凌川披风扬起沿冰廊疾行，跟拍，壁上火把掠过，裂缝光在廊窗一闪。",
+      "visual": "横屏16比9。凌川披风扬起沿冰廊疾行，跟拍，壁上火把掠过，裂缝光在廊窗一闪。",
+      "continuity": "横屏16比9。凌川披风扬起沿冰廊疾行，跟拍，壁上火把掠过，裂缝光在廊窗一闪。",
+      "camera": "",
+      "lighting": "",
+      "motion": "Tracking shot Ling Chuan running through ice palace corridor, cape flowing, torch lights streak, crack glow flashes in windows, dynamic but stable camera, SAME costume, no text.",
+      "performance": "奔跑无台词；呼吸加重。",
+      "ambience": "Footsteps, cape, urgent drums low",
+      "sfx": "",
+      "characters_in_shot": [
+        "凌川"
+      ],
+      "still_prompt": "静态分镜概念图，单镜头全屏电影画面，横屏16比9。凌川披风扬起沿冰廊疾行，跟拍，壁上火把掠过，裂缝光在廊窗一闪。",
+      "still_negative": "动漫, 卡通, 文字, 水印, 畸形脸, 多余手指, 白发王子, 银发, 刃雪城, 樱空释, 卡索, anime, subtitle, logo, deformed face, extra fingers",
+      "voices": [
+        {
+          "role": "凌川",
+          "text": "",
+          "note": "奔跑戏无对白",
+          "tts_voice": "echo",
+          "voice_desc": "TTS:echo",
+          "emotion": "紧迫"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "duration_sec": 7,
+      "title": "长老警示",
+      "scene_code": "SC-08",
+      "scene": "横屏16比9。圆形议事冰殿，玄清长老持杖立于冰台，凌川入殿停步；壁面 ancient 冰纹发光后变暗。",
+      "visual": "横屏16比9。圆形议事冰殿，玄清长老持杖立于冰台，凌川入殿停步；壁面 ancient 冰纹发光后变暗。",
+      "continuity": "横屏16比9。圆形议事冰殿，玄清长老持杖立于冰台，凌川入殿停步；壁面 ancient 冰纹发光后变暗。",
+      "camera": "",
+      "lighting": "冰壁内发光纹路，中央顶光",
+      "motion": "Elder Xuan Qing with ice staff in circular ice council hall, Ling Chuan enters and stops, ancient patterns on walls dimming, wide cinematic shot, realistic elders, no text.",
+      "performance": "长老约1.0秒起台词；凌川口型静止至后镜。",
+      "ambience": "Hall echo, ice crystal hum, low drone",
+      "sfx": "",
+      "characters_in_shot": [
+        "凌川",
+        "玄清长老"
+      ],
+      "still_prompt": "静态分镜概念图，单镜头全屏电影画面，横屏16比9。圆形议事冰殿，玄清长老持杖立于冰台，凌川入殿停步；壁面 ancient 冰纹发光后变暗。",
+      "still_negative": "动漫, 卡通, 文字, 水印, 畸形脸, 多余手指, 白发王子, 银发, 刃雪城, 樱空释, 卡索, anime, subtitle, logo, deformed face, extra fingers",
+      "voices": [
+        {
+          "role": "玄清长老",
+          "text": "殿下，古籍称此为天裂。若裂缝闭合，王国将被拖入虚无。",
+          "start_sec": 1.0,
+          "tts_voice": "onyx",
+          "voice_desc": "年迈沙哑。TTS:onyx",
+          "emotion": "忧虑"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "duration_sec": 6,
+      "title": "黑雪满城",
+      "scene_code": "SC-09",
+      "scene": "横屏16比9。王城街道广角，民众仰望，黑雪落在肩与伞上，远处裂缝占天空三分之一，脸小略虚化。",
+      "visual": "横屏16比9。王城街道广角，民众仰望，黑雪落在肩与伞上，远处裂缝占天空三分之一，脸小略虚化。",
+      "continuity": "横屏16比9。王城街道广角，民众仰望，黑雪落在肩与伞上，远处裂缝占天空三分之一，脸小略虚化。",
+      "camera": "高机位广角",
+      "lighting": "",
+      "motion": "Wide street shot citizens looking up, black snow falling, crack visible in sky, faces small or soft focus, cinematic crowd, no hero close-up, no text.",
+      "performance": "群众静默仰望；旁白画外。",
+      "ambience": "Crowd murmur, black snow hiss, distant rumble",
+      "sfx": "",
+      "characters_in_shot": [],
+      "still_prompt": "静态分镜概念图，单镜头全屏电影画面，横屏16比9。王城街道广角，民众仰望，黑雪落在肩与伞上，远处裂缝占天空三分之一，脸小略虚化。",
+      "still_negative": "动漫, 卡通, 文字, 水印, 畸形脸, 多余手指, 白发王子, 银发, 刃雪城, 樱空释, 卡索, anime, subtitle, logo, deformed face, extra fingers",
+      "voices": [
+        {
+          "role": "旁白",
+          "text": "人们第一次看见，雪可以是黑色的。",
+          "start_sec": 0.5,
+          "tts_voice": "onyx",
+          "voice_desc": "TTS:onyx",
+          "emotion": "沉重"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "duration_sec": 6,
+      "title": "登墙",
+      "scene_code": "SC-10",
+      "scene": "横屏16比9。凌川登上城墙垛口，风压黑袍，下方王城与裂缝同框，规模对比。",
+      "visual": "横屏16比9。凌川登上城墙垛口，风压黑袍，下方王城与裂缝同框，规模对比。",
+      "continuity": "横屏16比9。凌川登上城墙垛口，风压黑袍，下方王城与裂缝同框，规模对比。",
+      "camera": "",
+      "lighting": "",
+      "motion": "Ling Chuan reaching battlement, wind pressing robe, city and crack in same frame, epic wide shot, SAME Ling Chuan, slow pan, no text.",
+      "performance": "约1.2秒凌川台词，口型同步。",
+      "ambience": "High wind on battlement, city noise below",
+      "sfx": "",
+      "characters_in_shot": [
+        "凌川"
+      ],
+      "still_prompt": "静态分镜概念图，单镜头全屏电影画面，横屏16比9。凌川登上城墙垛口，风压黑袍，下方王城与裂缝同框，规模对比。",
+      "still_negative": "动漫, 卡通, 文字, 水印, 畸形脸, 多余手指, 白发王子, 银发, 刃雪城, 樱空释, 卡索, anime, subtitle, logo, deformed face, extra fingers",
+      "voices": [
+        {
+          "role": "凌川",
+          "text": "如果这也是梦……那就让我醒在真相里。",
+          "start_sec": 1.2,
+          "tts_voice": "echo",
+          "voice_desc": "TTS:echo 决断",
+          "emotion": "决断"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "duration_sec": 7,
+      "title": "黑影再现",
+      "scene_code": "SC-10",
+      "scene": "横屏16比9。裂缝边缘再次浮现人形黑影，无五官；凌川在下方前景仰头，闪电划过裂缝内壁。",
+      "visual": "横屏16比9。裂缝边缘再次浮现人形黑影，无五官；凌川在下方前景仰头，闪电划过裂缝内壁。",
+      "continuity": "横屏16比9。裂缝边缘再次浮现人形黑影，无五官；凌川在下方前景仰头，闪电划过裂缝内壁。",
+      "camera": "",
+      "lighting": "",
+      "motion": "Humanoid shadow reappearing at crack edge, no face, lightning inside crack, Ling Chuan below looking up, intense atmosphere, slow zoom, no text.",
+      "performance": "黑影约1.5秒台词，大混响；凌川闭口。",
+      "ambience": "Spatial reverb, lightning crack, sub rumble",
+      "sfx": "",
+      "characters_in_shot": [
+        "凌川",
+        "神秘黑影"
+      ],
+      "still_prompt": "静态分镜概念图，单镜头全屏电影画面，横屏16比9。裂缝边缘再次浮现人形黑影，无五官；凌川在下方前景仰头，闪电划过裂缝内壁。",
+      "still_negative": "动漫, 卡通, 文字, 水印, 畸形脸, 多余手指, 白发王子, 银发, 刃雪城, 樱空释, 卡索, anime, subtitle, logo, deformed face, extra fingers",
+      "voices": [
+        {
+          "role": "神秘黑影",
+          "text": "王城只是门扉。你，才是钥匙。",
+          "start_sec": 1.5,
+          "tts_voice": "onyx",
+          "voice_desc": "混响 onyx",
+          "emotion": "神秘、压迫"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "duration_sec": 6,
+      "title": "握紧冰符",
+      "scene_code": "SC-10",
+      "scene": "横屏16比9。特写：凌川手中握紧一枚 ancient 冰晶符纹，符纹微光与裂缝暗光脉冲同步。",
+      "visual": "横屏16比9。特写：凌川手中握紧一枚 ancient 冰晶符纹，符纹微光与裂缝暗光脉冲同步。",
+      "continuity": "横屏16比9。特写：凌川手中握紧一枚 ancient 冰晶符纹，符纹微光与裂缝暗光脉冲同步。",
+      "camera": "",
+      "lighting": "",
+      "motion": "Close-up Ling Chuan hand gripping ancient ice talisman, pulsing glow syncing with crack light, shallow DOF, realistic skin, no text.",
+      "performance": "约0.9秒凌川低语，口型同步。",
+      "ambience": "Talisman pulse tone, subtle crack resonance",
+      "sfx": "",
+      "characters_in_shot": [],
+      "still_prompt": "静态分镜概念图，单镜头全屏电影画面，横屏16比9。特写：凌川手中握紧一枚 ancient 冰晶符纹，符纹微光与裂缝暗光脉冲同步。",
+      "still_negative": "动漫, 卡通, 文字, 水印, 畸形脸, 多余手指, 白发王子, 银发, 刃雪城, 樱空释, 卡索, anime, subtitle, logo, deformed face, extra fingers",
+      "voices": [
+        {
+          "role": "凌川",
+          "text": "父王留给我的……原来不是护身符。",
+          "start_sec": 0.9,
+          "tts_voice": "echo",
+          "voice_desc": "TTS:echo 低语",
+          "emotion": "震惊"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "duration_sec": 6,
+      "title": "裂缝扩张",
+      "scene_code": "SC-01",
+      "scene": "横屏16比9。大全景：裂缝突然向两侧扩张一圈，黑雪暴涌，凌川在墙头渺小；画面渐黑留低频 rumble。",
+      "visual": "横屏16比9。大全景：裂缝突然向两侧扩张一圈，黑雪暴涌，凌川在墙头渺小；画面渐黑留低频 rumble。",
+      "continuity": "横屏16比9。大全景：裂缝突然向两侧扩张一圈，黑雪暴涌，凌川在墙头渺小；画面渐黑留低频 rumble。",
+      "camera": "",
+      "lighting": "",
+      "motion": "Crack suddenly expands wider, black snow burst, tiny Ling Chuan on wall, extreme wide apocalyptic shot, slow pull back, end fade to black, no text.",
+      "performance": "凌川震惊后退半步；可选短促无词惊呼口型。",
+      "ambience": "Massive expansion boom, fade to black",
+      "sfx": "扩张冲击波，钟鸣齐响一瞬后断",
+      "characters_in_shot": [],
+      "still_prompt": "静态分镜概念图，单镜头全屏电影画面，横屏16比9。大全景：裂缝突然向两侧扩张一圈，黑雪暴涌，凌川在墙头渺小；画面渐黑留低频 rumble。",
+      "still_negative": "动漫, 卡通, 文字, 水印, 畸形脸, 多余手指, 白发王子, 银发, 刃雪城, 樱空释, 卡索, anime, subtitle, logo, deformed face, extra fingers",
+      "voices": [
+        {
+          "role": "凌川",
+          "text": "所有人——退入城内！",
+          "start_sec": 0.6,
+          "tts_voice": "echo",
+          "voice_desc": "TTS:echo 喊声",
+          "emotion": "紧急"
+        }
+      ]
+    }
+  ]
+}

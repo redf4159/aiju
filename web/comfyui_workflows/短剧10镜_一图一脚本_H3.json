@@ -1,0 +1,520 @@
+{
+  "id": "drama10-ice-realm-unified-audio",
+  "revision": 2,
+  "last_node_id": 11,
+  "last_link_id": 10,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "MarkdownNote",
+      "pos": [
+        -2500,
+        4800
+      ],
+      "size": [
+        520,
+        560
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "用法",
+      "properties": {},
+      "widgets_values": [
+        "## 《冰境》成片说明\n\n1. **默认不加载 example.png**：留空图片即可按脚本自动生成 2×5 分镜\n2. 分镜会先保存到 output/drama_ui/auto_storyboard_*.png，可先核实\n3. 若已有正确十格拼图，再在左侧上传并连线\n4. shot_duration=6 每镜约6秒；旁白对白整片配音 + 连续 BGM\n"
+      ],
+      "color": "#222",
+      "bgcolor": "#000"
+    },
+    {
+      "id": 2,
+      "type": "UNETLoader",
+      "pos": [
+        -1800,
+        4800
+      ],
+      "size": [
+        420,
+        100
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            1
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "UNETLoader"
+      },
+      "widgets_values": [
+        "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "default"
+      ]
+    },
+    {
+      "id": 3,
+      "type": "CLIPLoader",
+      "pos": [
+        -1800,
+        4960
+      ],
+      "size": [
+        420,
+        130
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "CLIP",
+          "type": "CLIP",
+          "links": [
+            3
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "CLIPLoader"
+      },
+      "widgets_values": [
+        "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+        "minimax",
+        "default"
+      ]
+    },
+    {
+      "id": 4,
+      "type": "VAELoader",
+      "pos": [
+        -1800,
+        5160
+      ],
+      "size": [
+        420,
+        80
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            4
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAELoader"
+      },
+      "widgets_values": [
+        "minimax_h3_video_vae_fp16.safetensors"
+      ]
+    },
+    {
+      "id": 5,
+      "type": "VAELoader",
+      "pos": [
+        -1800,
+        5300
+      ],
+      "size": [
+        420,
+        80
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            5
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAELoader"
+      },
+      "widgets_values": [
+        "minimax_h3_audio_vae_fp32.safetensors"
+      ]
+    },
+    {
+      "id": 6,
+      "type": "LoraLoaderModelOnly",
+      "pos": [
+        -1300,
+        4800
+      ],
+      "size": [
+        420,
+        110
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            2
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoraLoaderModelOnly"
+      },
+      "widgets_values": [
+        "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+        1.0
+      ]
+    },
+    {
+      "id": 7,
+      "type": "LoadImage",
+      "pos": [
+        -1300,
+        5000
+      ],
+      "size": [
+        320,
+        320
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": null
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null
+        }
+      ],
+      "title": "上传10镜拼图（留空=按脚本自动分镜）",
+      "properties": {
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": [
+        "",
+        "image"
+      ]
+    },
+    {
+      "id": 8,
+      "type": "ResolutionSelector",
+      "pos": [
+        -1300,
+        5380
+      ],
+      "size": [
+        320,
+        130
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "width",
+          "type": "INT",
+          "links": [
+            7
+          ]
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "links": [
+            8
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "ResolutionSelector"
+      },
+      "widgets_values": [
+        "9:16 (Portrait Widescreen)",
+        0.2,
+        32
+      ]
+    },
+    {
+      "id": 9,
+      "type": "Drama10ShotMiniMaxH3",
+      "pos": [
+        -800,
+        4800
+      ],
+      "size": [
+        560,
+        1000
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 2
+        },
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 3
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 4
+        },
+        {
+          "name": "audio_vae",
+          "type": "VAE",
+          "link": 5
+        },
+        {
+          "name": "first_frame",
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "name": "prompt",
+          "type": "STRING",
+          "widget": {
+            "name": "prompt"
+          },
+          "link": null
+        },
+        {
+          "name": "width",
+          "type": "INT",
+          "widget": {
+            "name": "width"
+          },
+          "link": 7
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "widget": {
+            "name": "height"
+          },
+          "link": 8
+        }
+      ],
+      "outputs": [
+        {
+          "name": "VIDEO",
+          "type": "VIDEO",
+          "links": [
+            9
+          ]
+        },
+        {
+          "name": "STORYBOARD",
+          "type": "IMAGE",
+          "links": [
+            10
+          ]
+        }
+      ],
+      "title": "短剧10镜 Image to Video (MiniMax H3)",
+      "properties": {
+        "Node name for S&R": "Drama10ShotMiniMaxH3"
+      },
+      "widgets_values": [
+        "《冰境》第一集：黑色裂缝\nAI短剧制作脚本｜约60秒｜9:16竖屏｜10个镜头\n\n一、制作统一标准\n画幅：9:16竖屏\n总时长：约60秒\n镜头数量：10个\n视觉风格：东方玄幻电影感、真人写实、冰雪世界\n提示：不生成字幕、文字、Logo。人物尽量使用固定人物参考图，保持脸型、发型、服装一致。\n说明：本项目采用原创短剧版本，不直接使用《幻城》原著台词、完整剧情或人物设定。\n\n01｜冰境王城｜6秒\n画面：巨大冰雪王城坐落在群山之间，冰晶城堡直入云端，天空下着暴雪。\n\n视频提示词：\n9:16竖屏电影画面。\n一座宏伟的东方玄幻冰雪王城坐落在巨大雪山之间，整个城市由冰晶和白色石材建造，中央是一座高耸入云的巨大冰晶王宫。\n漫天雪花缓慢飘落，远处雪山被云雾笼罩，冰蓝色月光和微弱的城市灯光交织。\n镜头从高空俯视整个王城，然后缓慢向王宫推进。\n画面具有史诗级东方玄幻电影质感，真实电影光影，真实雪花，体积雾，空间层次丰富。\n镜头运动平稳、缓慢、庄严。\n不要文字，不要字幕，不要Logo。\n\n旁白：\n“很久以前，在世界的尽头，有一座被冰雪覆盖的王国。”\n\n声音：风雪声＋低沉史诗音乐。\n\n02｜凌川出现｜6秒\n画面：凌川站在冰晶窗前。\n\n视频提示词：\n9:16竖屏。\n年轻的东方男性王子凌川站在巨大的冰晶窗前。\n20岁左右，黑色长发，苍白皮肤，深蓝色眼睛，俊美冷峻的东方五官。\n身穿黑蓝色东方幻想王族长袍，衣服上有精致的银色冰晶纹饰。\n窗外是猛烈的暴雪和连绵雪山。\n凌川背对镜头站立，随后缓慢转过头，看向窗外。\n他的长发和衣袍随着冰冷的气流轻轻移动。\n镜头从背影缓慢推进到侧脸特写。\n真实人物质感，东方玄幻电影风格，冷蓝色光线，细腻皮肤和服装材质。\n不要文字、字幕、Logo。\n\n对白：\n凌川低声：“又是这个梦……”\n\n声音：风声＋很轻的呼吸声。\n\n03｜梦境冰原｜6秒\n画面：凌川站在无边冰原。\n\n视频提示词：\n9:16竖屏电影画面。\n凌川突然出现在一片无边无际的冰原。\n天空阴沉，巨大的雪山被黑雾笼罩。\n天空中飘落着诡异的黑色雪花。\n凌川独自站在冰原中央，黑色长发被寒风吹动。\n远处出现一座巨大而古老的黑色神殿。\n凌川慢慢抬起头，看向远处的神殿。\n镜头从凌川背后缓慢向前推进。\n整个画面神秘、压迫、寂静。\n东方玄幻电影质感，真实人物，真实雪花，体积雾，电影级光影。\n不要文字、字幕、Logo。\n\n旁白：\n“从很小的时候开始，凌川就反复做着同一个梦。”\n\n对白：\n凌川：“那里……到底是什么地方？”\n\n04｜黑色雪花｜5秒\n画面：黑色雪花落在凌川手上。\n\n视频提示词：\n9:16竖屏微距电影镜头。\n一片诡异的黑色雪花在空中缓慢旋转。\n周围大量普通白色雪花快速飘落。\n镜头慢慢靠近黑色雪花。\n黑色雪花落到凌川伸出的手掌上。\n就在接触手掌的一瞬间，黑色雪花开始微微发出暗蓝色光芒。\n凌川的表情从疑惑逐渐变成警惕。\n真实雪花细节，浅景深，电影级微距摄影，神秘东方玄幻氛围。\n不要文字、字幕、Logo。\n\n对白：\n凌川：“黑色的雪……”\n\n05｜古老神殿｜6秒\n画面：凌川走向黑色神殿。\n\n视频提示词：\n9:16竖屏。\n凌川独自走在巨大冰原上。\n远处是一座已经残破的黑色远古神殿。\n神殿高耸入云，巨大的黑色石柱已经断裂，四周覆盖着厚厚的冰雪。\n凌川缓慢向神殿入口走去。\n随着他靠近神殿，周围的雪突然停止飘落。\n空气变得异常安静。\n镜头从凌川背后跟随拍摄，然后慢慢向神殿入口推进。\n真实电影质感，黑蓝色东方玄幻，神秘、压迫、史诗感。\n不要文字、字幕、Logo。\n\n对白：\n凌川：“是谁……在这里？”\n\n06｜黑色裂缝｜7秒\n画面：黑色空间裂缝突然出现。\n\n视频提示词：\n9:16竖屏电影画面。\n古老黑色神殿内部。\n凌川站在巨大大厅中央。\n突然，地面出现一道细小的裂缝。\n蓝黑色能量从裂缝中缓慢渗出。\n裂缝迅速扩大，整个地面开始震动。\n轰然一声，一道巨大的黑色空间裂缝出现在神殿中央。\n裂缝内部仿佛连接着一个未知的黑暗世界。\n大量冰块和石头被吸向裂缝，并缓缓漂浮在空中。\n凌川震惊地后退一步。\n镜头快速向黑色裂缝推进。\n黑色能量和蓝色冰晶能量不断碰撞。\n史诗级东方玄幻电影效果，真实粒子特效，强烈空间感。\n不要文字、字幕、Logo。\n\n对白：\n凌川惊恐低声：“这……不可能。”\n\n07｜神秘声音｜6秒\n画面：凌川靠近裂缝，裂缝内部出现模糊人形。\n\n视频提示词：\n9:16竖屏。\n凌川慢慢走向巨大的黑色空间裂缝。\n他伸出右手。\n周围开始出现大量蓝色冰晶。\n冰晶围绕他的手掌缓慢旋转。\n突然，裂缝内部传出低沉而遥远的声音。\n凌川猛然抬头。\n镜头从凌川的手部缓慢向上移动到他的脸。\n他的眼神从疑惑变成震惊。\n黑色裂缝内部出现一个模糊的人形轮廓。\n人物脸部完全隐藏在黑暗中。\n电影级光影，神秘黑雾，蓝黑色魔法能量。\n不要文字、字幕、Logo。\n\n神秘声音：“你终于……回来了。”\n凌川：“你是谁？”\n\n08｜黑影｜6秒\n画面：神秘黑影出现。\n\n视频提示词：\n9:16竖屏。\n黑色裂缝深处，一个高大的神秘黑衣人缓慢出现。\n黑衣人身穿巨大黑色长袍，身体隐藏在黑雾之中。\n脸部完全看不清。\n黑色雾气不断围绕他的身体旋转。\n他缓慢抬起头。\n凌川站在远处警惕地看着他。\n两人隔着巨大的空间裂缝对视。\n黑衣人没有继续靠近。\n整个空间突然安静下来。\n镜头缓慢推进黑衣人的头部，但始终不要看清他的脸。\n神秘、压迫、诡异、东方玄幻电影质感。\n不要文字、字幕、Logo。\n\n神秘声音：“你不该来这里。”\n凌川：“是你把我带来的？”\n\n09｜惊醒｜6秒\n画面：凌川突然从床上惊醒。\n\n视频提示词：\n9:16竖屏电影画面。\n凌川突然从冰晶王宫的床上惊醒。\n他猛然坐起，大口呼吸。\n额头有细微汗水。\n黑色长发凌乱地垂落在脸侧。\n房间非常安静。\n窗外依然下着暴雪。\n冰蓝色月光透过巨大冰晶窗照进房间。\n凌川慢慢抬起头，看向窗外。\n镜头从中景慢慢推进到他的脸部特写。\n真实人物表情，紧张、疑惑、难以置信。\n电影级冷蓝色灯光。\n不要文字、字幕、Logo。\n\n对白：\n凌川：“只是梦……”\n停顿。\n“ 一定只是梦。”\n\n10｜天空裂缝｜6秒\n画面：王城天空出现黑色裂缝，第一集结尾。\n\n视频提示词：\n9:16竖屏电影结尾镜头。\n凌川缓慢走到巨大的冰晶窗前。\n镜头从他的背后拍摄。\n窗外是庞大的冰雪王城。\n漫天暴雪正在落下。\n一切看起来和平常没有区别。\n凌川抬头看向天空。\n突然，天空出现一道极其细小的黑色裂缝。\n凌川身体瞬间僵住。\n裂缝开始缓慢扩大。\n周围的天空出现蓝黑色能量。\n原本向下飘落的雪花突然全部向天空飞去。\n凌川站在窗前一动不动。\n镜头从凌川背后缓慢向天空推进。\n黑色裂缝越来越巨大。\n最后画面突然切黑。\n电影级悬念结尾，强烈视觉冲击，东方玄幻史诗电影质感。\n不要文字、字幕、Logo。\n\n对白：\n凌川非常轻地说：\n“不……”\n停顿。\n“它真的来了。”\n画面切黑。",
+        352,
+        608,
+        6.0,
+        42,
+        true,
+        8,
+        5,
+        2,
+        true
+      ]
+    },
+    {
+      "id": 10,
+      "type": "SaveVideo",
+      "pos": [
+        -160,
+        4800
+      ],
+      "size": [
+        320,
+        200
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "link": 9
+        }
+      ],
+      "outputs": [],
+      "title": "保存成片",
+      "properties": {
+        "Node name for S&R": "SaveVideo"
+      },
+      "widgets_values": [
+        "drama_ui/ice_realm_ep1",
+        "auto",
+        "auto"
+      ]
+    },
+    {
+      "id": 11,
+      "type": "SaveImage",
+      "pos": [
+        -160,
+        5100
+      ],
+      "size": [
+        320,
+        280
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 10
+        }
+      ],
+      "outputs": [],
+      "title": "保存分镜拼图（核实用）",
+      "properties": {
+        "Node name for S&R": "SaveImage"
+      },
+      "widgets_values": [
+        "drama_ui/ice_realm_storyboard"
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      2,
+      0,
+      6,
+      0,
+      "MODEL"
+    ],
+    [
+      2,
+      6,
+      0,
+      9,
+      0,
+      "MODEL"
+    ],
+    [
+      3,
+      3,
+      0,
+      9,
+      1,
+      "CLIP"
+    ],
+    [
+      4,
+      4,
+      0,
+      9,
+      2,
+      "VAE"
+    ],
+    [
+      5,
+      5,
+      0,
+      9,
+      3,
+      "VAE"
+    ],
+    [
+      7,
+      8,
+      0,
+      9,
+      6,
+      "INT"
+    ],
+    [
+      8,
+      8,
+      1,
+      9,
+      7,
+      "INT"
+    ],
+    [
+      9,
+      9,
+      0,
+      10,
+      0,
+      "VIDEO"
+    ],
+    [
+      10,
+      9,
+      1,
+      11,
+      0,
+      "IMAGE"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.65,
+      "offset": [
+        2200,
+        -4500
+      ]
+    },
+    "frontendVersion": "1.53.6"
+  },
+  "version": 0.4
+}

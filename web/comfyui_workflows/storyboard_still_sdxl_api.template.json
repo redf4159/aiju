@@ -1,0 +1,44 @@
+{
+  "_comment": "制作台 STORYBOARD_BACKEND=sdxl_t2i 时 API 提交的等价图（节点 ID 与 storyboard_still_workflows.build_sdxl_t2i_still_workflow 一致）",
+  "_install": "将写实向 SDXL/SD1.5 checkpoint 放入 ComfyUI/models/checkpoints/，并设置环境变量 STORYBOARD_SDXL_CKPT=文件名.safetensors",
+  "_rotate": "SDXL 竖屏通常无需 STORYBOARD_TILE_ROTATE，建议设为 0",
+  "1": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": { "ckpt_name": "realisticVisionV60B1_v51VAE.safetensors" }
+  },
+  "2": {
+    "class_type": "CLIPTextEncode",
+    "inputs": { "text": "（正提示词：真人写实竖屏剧照）", "clip": ["1", 1] }
+  },
+  "3": {
+    "class_type": "CLIPTextEncode",
+    "inputs": { "text": "（负提示词）", "clip": ["1", 1] }
+  },
+  "4": {
+    "class_type": "EmptyLatentImage",
+    "inputs": { "width": 720, "height": 1280, "batch_size": 1 }
+  },
+  "5": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": 42,
+      "steps": 28,
+      "cfg": 7,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 1,
+      "model": ["1", 0],
+      "positive": ["2", 0],
+      "negative": ["3", 0],
+      "latent_image": ["4", 0]
+    }
+  },
+  "6": {
+    "class_type": "VAEDecode",
+    "inputs": { "samples": ["5", 0], "vae": ["1", 2] }
+  },
+  "7": {
+    "class_type": "SaveImage",
+    "inputs": { "images": ["6", 0], "filename_prefix": "bingjing/shot_sdxl" }
+  }
+}

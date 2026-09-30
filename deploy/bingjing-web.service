@@ -1,0 +1,46 @@
+[Unit]
+Description=Bingjing Web Production Console
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/linux/bingjing/web
+Environment=COMFYUI_URL=http://127.0.0.1:8000
+Environment=COMFYUI_ROOT=/home/linux/ComfyUI
+Environment=BINGJING_DATA=/home/linux/bingjing/web/data
+Environment=PUBLIC_COMFYUI_URL=http://175.155.64.171:61950
+Environment=WEB_PUBLIC_URL=http://175.155.64.171:61951
+# 部署时必改：WEB_USER / WEB_PASSWORD
+Environment=WEB_USER=changeme
+Environment=WEB_PASSWORD=changeme
+Environment=STORYBOARD_STEPS=14
+Environment=STORYBOARD_CLOSEUP_STEPS=18
+Environment=STORYBOARD_TILE_ROTATE=0
+Environment=EPISODE_VIDEO_SEGMENTED=1
+Environment=VIDEO_CANVAS_SHORT_EDGE=352
+Environment=STORYBOARD_IMAGE_SIZE=1536x864
+Environment=DRAMA10_USE_XFADE=0
+Environment=DRAMA10_AMB_MIX_GAIN=1.55
+Environment=DRAMA10_BGM_MIX_GAIN=0.72
+Environment=DRAMA10_SPEECH_MIX_GAIN=1.0
+Environment=DRAMA10_SILENT_MEAN_DB=-42
+Environment=DRAMA10_PREVIEW_BGM_GAIN=0.45
+Environment=DRAMA10_WEB_AUDIO_ONLY=1
+Environment=DRAMA10_DEHUM_AF=highpass=f=200,lowpass=11000
+# 分镜静帧：minimax_h3（默认）| sdxl_t2i（需 checkpoints，建议 TILE_ROTATE=0）
+# Environment=STORYBOARD_BACKEND=sdxl_t2i
+# Environment=STORYBOARD_SDXL_CKPT=realisticVisionV60B1_v51VAE.safetensors
+# Environment=STORYBOARD_SDXL_STEPS=28
+# 第三方分镜 API（模型广场 OpenAI 兼容 /v1/images/generations）
+# Environment=STORYBOARD_BACKEND=image_api
+# Environment=STORYBOARD_IMAGE_API_BASE=https://你的网关/v1
+# Environment=STORYBOARD_IMAGE_API_KEY=sk-...
+# Environment=STORYBOARD_IMAGE_MODEL=gpt-image-2.5-flare
+# Environment=STORYBOARD_IMAGE_SIZE_PORTRAIT=1024x1536
+# Environment=STORYBOARD_TILE_ROTATE=0
+ExecStart=/home/linux/comfyui-venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8001
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

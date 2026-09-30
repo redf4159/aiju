@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+.venv/
+venv/
+env/
+
+# 密钥与环境（绝不要提交）
+.env
+.env.*
+*.pem
+*.key
+**/studio_settings.local.*
+
+# 运行时数据（新服务器上由制作台生成）
+web/data/studio.db
+web/data/studio.db-*
+web/data/projects/
+web/data/sfx_cache/
+web/output/
+*.log
+
+# 本地运维/探测脚本（含服务器凭证或硬编码路径，勿提交）
+_ssh_*.py
+_fetch_*.py
+_test_comfy_api*.py
+
+# IDE / OS
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini
+
+# 大体积试产出（可选保留 ep json）
+web/output/**
+
+# 临时
+*.tmp
+*.bak
+*~
