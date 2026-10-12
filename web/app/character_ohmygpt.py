@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""人物库：OhMyGPT 文生图 + OpenAI 兼容 TTS。"""
+"""人物/场景/道具库：OhMyGPT 设定组合图 + OpenAI 兼容 TTS。"""
 from __future__ import annotations
 
 import os
@@ -8,13 +8,26 @@ from typing import Optional
 
 import httpx
 
-from .generation_prefs import LIVE_ACTION_PREFIX, effective_style
+from .asset_sheet_prompts import (
+    DEFAULT_ART_STYLE,
+    AssetKind,
+    compose_sheet_api_prompt,
+    sheet_canvas,
+)
 from .storyboard_image_api import (
-    _merge_prompt,
-    _resolve_api_credentials,
     generate_still_to_file,
     image_api_model,
 )
+
+
+def _infer_kind(angle_label: str, role_note: str) -> AssetKind:
+    al = (angle_label or "").strip()
+    rn = (role_note or "").strip()
+    if "场景" in al or "母景" in al or "空镜" in rn:
+        return "scene"
+    if "道具" in al or "物品" in al:
+        return "prop"
+    return "character"
 
 
 def _character_image_prompt(
@@ -26,23 +39,23 @@ def _character_image_prompt(
     prefs: dict,
     angle_label: str,
     extra: str,
+    kind: Optional[AssetKind] = None,
 ) -> tuple[str, str]:
-    angle = (angle_label or "正面").strip()
-    sp, neg = effective_style(style_prefix, prefs)
-    parts = [
-        LIVE_ACTION_PREFIX,
-        sp,
-        f"单人角色设定参考图，{angle}视角",
-        f"角色：{name}",
-    ]
-    if role_note.strip():
-        parts.append(role_note.strip())
-    if visual_prompt.strip():
-        parts.append(visual_prompt.strip())
-    if extra.strip():
-        parts.append(extra.strip())
-    parts.append("横屏16比9半身或全身，背景简洁，无文字无水印，电影剧照质感")
-    return _merge_prompt("，".join(parts), neg), neg
+    art = (style_prefix or "").strip() or DEFAULT_ART_STYLE
+    # 项目若仍挂 live_action，设定图仍以国漫组合图为准，不用真人摄影前缀
+    if "国漫" not in art and "3D" not in art and "半写实" not in art:
+        art = f"{DEFAULT_ART_STYLE}，{art}" if art else DEFAULT_ART_STYLE
+    k = kind or _infer_kind(angle_label, role_note)
+    appearance = (visual_prompt or "").strip() or (role_note or "").strip()
+    return compose_sheet_api_prompt(
+        kind=k,
+        name=name,
+        visual_prompt=appearance,
+        role_note=role_note or "",
+        art_style=art,
+        angle_label=angle_label,
+        extra=extra,
+    )
 
 
 def generate_character_portrait_file(
@@ -58,6 +71,7 @@ def generate_character_portrait_file(
     angle_label: str = "正面",
     extra: str = "",
     model: Optional[str] = None,
+    kind: Optional[AssetKind] = None,
 ) -> Path:
     prompt, neg = _character_image_prompt(
         name=name,
@@ -67,12 +81,17 @@ def generate_character_portrait_file(
         prefs=prefs,
         angle_label=angle_label,
         extra=extra,
+        kind=kind,
     )
+    # 设定组合图强制 16:9 横屏，避免竖屏项目把三视图压成竖幅
+    sw, sh = sheet_canvas(max(width, 1280), max(height if width >= height else width, 720))
+    if width >= height and width >= 640 and height >= 360:
+        sw, sh = sheet_canvas(width, height)
     return generate_still_to_file(
         prompt,
         neg,
-        width,
-        height,
+        sw,
+        sh,
         dest,
         model=model or image_api_model(prefs),
     )
@@ -98,6 +117,8 @@ def generate_character_voice_file(
     voice: Optional[str] = None,
     timeout: float = 120.0,
 ) -> Path:
+    from .storyboard_image_api import _resolve_api_credentials
+
     base, key = _resolve_api_credentials()
     if not key:
         raise RuntimeError(

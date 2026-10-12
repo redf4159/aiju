@@ -185,8 +185,9 @@ CROWD_VOICE_LINES = [
 ]
 
 I2V_NO_TEXT_SUFFIX = (
-    "严禁画面内出现字幕、汉字、字母、标题、水印、Logo、UI、横幅字；"
-    "对白时刻也不要在画面显示台词文字。"
+    "绝对禁止画面出现任何文字：无字幕、无汉字、无字母、无数字标题、无台词条、无弹幕、无水印、无Logo、无UI；"
+    "即使有人说话也不要在画面上显示台词；不要生成可读文字或书法牌匾特写；"
+    "clean cinematic frames only, no on-screen text, no subtitles, no captions."
 )
 
 SR = 44100
@@ -437,6 +438,25 @@ def _encode_shot_mp4(pt_path: Path, mp4_path: Path, fps: float):
         )
     print(f"[Drama10] encoded {mp4_path.name} frames={t}", flush=True)
 
+
+
+def _attach_native_audio_to_mp4(mp4_path: Path, audio, wav_path: Path) -> bool:
+    """把 MiniMax 原生音频 mux 进已编码的无声 mp4；绝不烧字幕、不做 TTS。"""
+    if not audio or not isinstance(audio, dict) or "waveform" not in audio:
+        return False
+    try:
+        _write_wav(audio, wav_path)
+        out_av = mp4_path.with_suffix(".av.mp4")
+        _mux_av(mp4_path, wav_path, out_av, None)
+        if out_av.is_file() and out_av.stat().st_size > 512:
+            mp4_path.write_bytes(out_av.read_bytes())
+            out_av.unlink(missing_ok=True)
+            ok = _mp4_has_audio_stream(mp4_path)
+            print(f"[Drama10] native AV mux -> {mp4_path.name} audio={ok}", flush=True)
+            return ok
+    except Exception as e:
+        print(f"[Drama10] native AV mux fail: {e}", flush=True)
+    return False
 
 def _shot_mp4_path(ckpt: Path, shot_num: int) -> Path:
     d = ckpt / "mp4"
@@ -765,7 +785,9 @@ def _mux_av(
     out_mp4: Path,
     srt_path: Optional[Path] = None,
 ):
-    if srt_path and srt_path.is_file() and srt_path.stat().st_size > 8:
+    # 产品要求：画面永不烧录字幕
+    srt_path = None
+    if False and srt_path and srt_path.is_file() and srt_path.stat().st_size > 8:
         sp = str(srt_path).replace("\\", "/").replace(":", "\\:")
         vh = _probe_video_height(video_mp4)
         fs = max(13, min(16, int(vh * 0.017)))
@@ -1812,7 +1834,9 @@ def _gen_one_shot(
     noise_seed: int,
     steps: int,
     sampler,
+    audio_vae=None,
 ):
+    """采样 MiniMax H3 联合 AV latent：视频 VAE + 音频 VAE 原生解码（不做 TTS）。"""
     pos, latent = _uw(
         MiniMaxH3ImageToVideo.execute(
             clip=clip,
@@ -1840,12 +1864,22 @@ def _gen_one_shot(
     del noise, guider, sigmas, pos, latent, sampler
     gc.collect()
     _release_vram_after_sampling()
-    print("[Drama10] VAE decode after unload diffusion/TE…", flush=True)
+    print("[Drama10] VAE decode video (+native audio if audio_vae)…", flush=True)
     images = nodes.VAEDecode().decode(vae, out_lat)[0]
+    audio = None
+    if audio_vae is not None:
+        try:
+            from comfy_extras.nodes_audio import vae_decode_audio
+
+            audio = vae_decode_audio(audio_vae, out_lat)
+            print("[Drama10] MiniMax native audio decoded", flush=True)
+        except Exception as e:
+            print(f"[Drama10] native audio decode fail (no TTS fallback): {e}", flush=True)
+            audio = None
     del out_lat
     gc.collect()
     comfy.model_management.soft_empty_cache()
-    return _as_thwc(images).detach().cpu().half().contiguous()
+    return _as_thwc(images).detach().cpu().half().contiguous(), audio
 
 
 class Drama10StoryboardMiniMaxH3(io.ComfyNode):
@@ -1887,7 +1921,7 @@ class Drama10StoryboardMiniMaxH3(io.ComfyNode):
             print(f"[Drama10/SB] still {i+1}/{n}", flush=True)
             # 强调单帧构图
             p = "静态分镜概念图，一张完整单镜头画面，" + script
-            imgs = _gen_one_shot(
+            imgs, _ = _gen_one_shot(
                 model, clip, vae, p, width, height, length, None, int(noise_seed) + i, steps, sampler
             )
             # 取末帧：首帧常糊脸/扭曲（竖屏分镜静帧）
@@ -2216,7 +2250,7 @@ class Drama10ShotMiniMaxH3(io.ComfyNode):
         audio_pt = ckpt / "audio.pt"
         audio = None
         want_preview_audio = _coerce_bool(preview_with_audio) and preview_one_shot
-        if os.environ.get("DRAMA10_WEB_AUDIO_ONLY", "1").strip().lower() in (
+        if os.environ.get("DRAMA10_WEB_AUDIO_ONLY", "0").strip().lower() in (
             "1",
             "true",
             "yes",
@@ -2229,7 +2263,7 @@ class Drama10ShotMiniMaxH3(io.ComfyNode):
                 flush=True,
             )
         elif preview_one_shot:
-            print("[Drama10] single-shot preview: will mux audio after i2v", flush=True)
+            print("[Drama10] single-shot: MiniMax native AV (no TTS remux)", flush=True)
         else:
             print(
                 "[Drama10] defer TTS/BGM until mux (ffprobe shot lengths + start_sec)",
@@ -2290,6 +2324,7 @@ class Drama10ShotMiniMaxH3(io.ComfyNode):
                     "摄影机运动平稳；人物呼吸眨眼与环境粒子同步微动。"
                     "严禁旋转、甩镜、扭曲、万花筒、分格拼图；地平线水平，画面 upright。"
                     + I2V_NO_TEXT_SUFFIX
+                    + "\n【再强调】本镜输出必须无字幕、无烧录字、无台词上屏；音频另轨，画面纯净。"
                 )
                 try:
                     sp_txt = ckpt / f"i2v_prompt_shot{orig_sn:02d}.txt"
@@ -2304,7 +2339,7 @@ class Drama10ShotMiniMaxH3(io.ComfyNode):
                     flush=True,
                 )
                 tile_in = _resize_tile(tile, int(width), int(height))
-                imgs = _gen_one_shot(
+                imgs, native_audio = _gen_one_shot(
                     model,
                     clip,
                     vae,
@@ -2316,6 +2351,7 @@ class Drama10ShotMiniMaxH3(io.ComfyNode):
                     int(noise_seed) + orig_sn - 1,
                     i2v_steps,
                     sampler,
+                    audio_vae=audio_vae,
                 )
                 imgs = _correct_i2v_orientation(
                     tile_in, imgs, int(width), int(height), orig_sn=orig_sn
@@ -2325,6 +2361,14 @@ class Drama10ShotMiniMaxH3(io.ComfyNode):
                 _save_shot_pt(sp, imgs)
                 _release_vram_after_sampling()
                 _encode_shot_mp4(sp, mp4, float(FPS))
+                wav_native = ckpt / "mp4" / f"shot_{orig_sn:02d}.native.wav"
+                wav_native.parent.mkdir(exist_ok=True)
+                if not _attach_native_audio_to_mp4(mp4, native_audio, wav_native):
+                    print(
+                        f"[Drama10] shot {orig_sn}: no MiniMax native audio after encode; "
+                        "will NOT TTS-remux (check script / storyboard)",
+                        flush=True,
+                    )
                 del imgs
                 gc.collect()
                 comfy.model_management.soft_empty_cache()
@@ -2344,10 +2388,31 @@ class Drama10ShotMiniMaxH3(io.ComfyNode):
             orig_sn = int(shot_only) if shot_only > 0 else int(orig_shot_nums[0])
             pt = _shot_pt_path(ckpt, orig_sn)
             mp4 = mp4_dir / f"shot_{orig_sn:02d}.mp4"
-            if pt.is_file():
+            # 关键：i2v 循环里已 encode + native AV mux；这里再 encode 会用 -an 覆盖掉音轨
+            if mp4.is_file() and mp4.stat().st_size > 1024 and _mp4_has_audio_stream(mp4):
+                print(
+                    f"[Drama10] keep existing native AV {mp4.name} (skip silent re-encode)",
+                    flush=True,
+                )
+            elif pt.is_file():
                 _encode_shot_mp4(pt, mp4, float(FPS))
+                wav_native = mp4_dir / f"shot_{orig_sn:02d}.native.wav"
+                if wav_native.is_file() and wav_native.stat().st_size > 256:
+                    # 若仅有 wav 残留，尝试补回（无 TTS）
+                    try:
+                        out_av = mp4.with_suffix(".av.mp4")
+                        _mux_av(mp4, wav_native, out_av, None)
+                        if out_av.is_file() and out_av.stat().st_size > 512:
+                            mp4.write_bytes(out_av.read_bytes())
+                            out_av.unlink(missing_ok=True)
+                            print(
+                                f"[Drama10] restored native audio from {wav_native.name}",
+                                flush=True,
+                            )
+                    except Exception as e:
+                        print(f"[Drama10] restore native wav fail: {e}", flush=True)
             elif not (resume and mp4.is_file() and mp4.stat().st_size > 1024):
-                raise RuntimeError(f"单镜 {shot_only} 未生成 mp4: {mp4}")
+                raise RuntimeError(f"镜头 {shot_only} 未生成 mp4: {mp4}")
             print(f"[Drama10] single-shot segment done (no mux): {mp4.name}", flush=True)
             try:
                 comfy.model_management.unload_all_models()
@@ -2356,37 +2421,18 @@ class Drama10ShotMiniMaxH3(io.ComfyNode):
             comfy.model_management.soft_empty_cache()
             if not mp4.is_file():
                 raise RuntimeError(f"单镜 {shot_only} 未生成 mp4: {mp4}")
-            if want_preview_audio:
-                if _mp4_has_audio_stream(mp4):
-                    print(
-                        f"[Drama10] single-shot {orig_sn} mp4 already has audio, skip remux",
-                        flush=True,
-                    )
-                else:
-                    try:
-                        comfy.model_management.unload_all_models()
-                    except Exception:
-                        pass
-                    comfy.model_management.soft_empty_cache()
-                    gc.collect()
-                    i_ep = (
-                        orig_shot_nums.index(orig_sn)
-                        if orig_sn in orig_shot_nums
-                        else max(0, orig_sn - 1)
-                    )
-                    vl = voice_per_shot[i_ep] if i_ep < len(voice_per_shot) else []
-                    amb = ambience_per_shot[i_ep] if i_ep < len(ambience_per_shot) else ""
-                    print(
-                        f"[Drama10] mux shot{orig_sn} voices={len(vl)} amb={bool(amb)}",
-                        flush=True,
-                    )
-                    _mux_one_shot_preview_audio(
-                        ckpt,
-                        mp4,
-                        vl,
-                        amb,
-                        int(noise_seed),
-                    )
+            # 禁止 TTS/BGM 混音：只保留 MiniMax 原生音轨
+            if _mp4_has_audio_stream(mp4):
+                print(
+                    f"[Drama10] single-shot {orig_sn} MiniMax native audio OK",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"[Drama10] single-shot {orig_sn} missing native audio; "
+                    "TTS remux DISABLED — fix script/storyboard and rerun",
+                    flush=True,
+                )
             sb_out = _storyboard_for_output(storyboard_img, tiles)
             return io.NodeOutput(VideoFromFile(str(mp4)), sb_out)
 
@@ -2453,44 +2499,17 @@ class Drama10ShotMiniMaxH3(io.ComfyNode):
             flush=True,
         )
 
-        speech, sub_events = _build_speech_timeline(
-            voice_per_shot,
-            shot_starts,
-            actual_durs,
-            episode_shot_indices=list(range(len(voice_per_shot))),
-            episode_wide_sync=True,
-        )
-        bgm = _continuous_bgm(max(dur, acc) + 2.5, seed=int(noise_seed))
-        sfx = _build_ambience_timeline(
-            ambience_per_shot, actual_durs, seed=int(noise_seed) + 17
-        )
-        audio = _mix_audio(speech, bgm, sfx)
-        del speech, bgm, sfx
-
-        need = int(dur * SR)
-        w = audio["waveform"]
-        if w.dim() == 2:
-            w = w.unsqueeze(0)
-        if w.shape[-1] > need:
-            w = w[:, :, :need]
-        elif w.shape[-1] < need:
-            w = torch.cat([w, torch.zeros(1, w.shape[1], need - w.shape[-1])], dim=-1)
-        audio = {"waveform": w, "sample_rate": SR}
-        wav_path = ckpt / "audio.wav"
-        _write_wav(audio, wav_path)
-
-        srt_path = ckpt / "subs.srt"
-        _write_srt(sub_events, srt_path)
-        burn_subs = os.environ.get("DRAMA10_BURN_SUBS", "0").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        )
-
         final_mp4 = Path(folder_paths.get_output_directory()) / "drama_ui" / f"ice_realm_ep1_{job}.mp4"
         final_mp4.parent.mkdir(parents=True, exist_ok=True)
-        _mux_av(silent, wav_path, final_mp4, srt_path if burn_subs else None)
+        # 禁止整集 TTS/BGM/烧字幕：直接使用各镜 MiniMax 原生音轨拼接结果
+        import shutil as _shutil
+        _shutil.copyfile(silent, final_mp4)
+        n_av = sum(1 for p in shot_mp4s if _mp4_has_audio_stream(p))
+        print(
+            f"[Drama10] final concat only (no TTS/subs); "
+            f"native-audio shots={n_av}/{len(shot_mp4s)} -> {final_mp4}",
+            flush=True,
+        )
 
         # 标记完成
         (ckpt / "DONE").write_text(str(final_mp4), encoding="utf-8")

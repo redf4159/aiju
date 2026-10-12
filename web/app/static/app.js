@@ -50,6 +50,31 @@ function esc(s) {
     .replace(/>/g, "&gt;");
 }
 
+/** 任务时间统一显示为北京时间（Asia/Shanghai）。 */
+function formatBeijingTime(iso) {
+  if (!iso) return "—";
+  const raw = String(iso).trim();
+  let d = new Date(raw);
+  if (Number.isNaN(d.getTime())) {
+    d = new Date(raw.replace(" ", "T") + (/[zZ]|[+-]\d{2}:?\d{2}$/.test(raw) ? "" : "Z"));
+  }
+  if (Number.isNaN(d.getTime())) {
+    return raw.slice(0, 19).replace("T", " ");
+  }
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
+  const get = (t) => (parts.find((p) => p.type === t) || {}).value || "00";
+  return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")}`;
+}
+
 function stageClass(st) {
   return st || "pending";
 }
@@ -165,7 +190,9 @@ function videoJobDisplayLabel(j) {
     if (Array.isArray(p.shot_nums) && p.shot_nums.length) {
       return `单镜视频 · 镜 ${p.shot_nums.join("、")}`;
     }
-    if (p.mux_only) return "成片 · 拼接";
+    if (p.mux_only) return "合并成片";
+    if (p.confirm_full_episode && p.auto_concat === false) return "批量补缺分镜视频";
+    if (p.confirm_full_episode) return "整集视频";
   } catch (_) {
     /* ignore */
   }
@@ -314,7 +341,7 @@ function formatJobRow(j) {
     <td class="cell-status cell-${statusKey(j.status)}">${esc(statusLabel(j.status))}</td>
     <td class="progress-cell">${j.status === "running" ? pct + "%" : "—"}</td>
     <td class="job-msg-cell">${renderScrollDescCell(preview, detail, "任务说明")}</td>
-    <td class="job-time-cell">${esc(j.updated_at?.slice(0, 19)?.replace("T", " "))}</td>
+    <td class="job-time-cell">${esc(formatBeijingTime(j.updated_at))}</td>
   </tr>`;
 }
 
@@ -344,6 +371,8 @@ function productionFileVer(ep, relPath) {
 }
 
 function episodeAssetSignature(ep) {
+  // 仅随「落盘资产」变化；不要把视频任务进度/文案算进签名，
+  // 否则轮询会整表重绘镜头表，正在显示的分镜图会被冲掉。
   const d = ep.production || {};
   const paths = (ep.shots || [])
     .map((s) => `${s.image_path || ""}|${s.video_path || ""}`)
@@ -358,12 +387,9 @@ function episodeAssetSignature(ep) {
     .sort((a, b) => Number(a) - Number(b))
     .map((k) => `${k}:${mt[k]}`)
     .join(",");
-  const job = d.active_job;
-  const jobBit = job
-    ? `${job.stage_id}:${job.status}:${Math.round((job.progress || 0) * 100)}:${job.message || ""}`
-    : "";
   const jobDone = d.last_jobs?.storyboard_images?.updated_at || "";
-  return `${d.shots_with_image}/${d.shots_total}:${d.collage_path}:${d.collage_mtime || 0}:${d.video_path}:${d.video_mtime || 0}:${mtSig}:${vtSig}:${jobDone}:${paths}:${jobBit}`;
+  const vidDone = d.last_jobs?.video?.updated_at || "";
+  return `${d.shots_with_image}/${d.shots_total}:${d.collage_path}:${d.collage_mtime || 0}:${d.video_path}:${d.video_mtime || 0}:${mtSig}:${vtSig}:${jobDone}:${vidDone}:${paths}`;
 }
 
 function invalidateProjectFileCache(relPath) {
@@ -380,16 +406,32 @@ function invalidateProjectFileCache(relPath) {
   }
 }
 
-async function fetchProjectFileBlobUrl(relPath, ver = "") {
-  if (!relPath || !state.currentProjectId) return null;
-  const cacheKey = `${relPath}::${ver}`;
-  if (_fileBlobCache.has(cacheKey)) return _fileBlobCache.get(cacheKey);
+function projectFileUrl(relPath, ver = "", projectId = null) {
+  const pid = projectId || state.currentProjectId;
+  if (!relPath || !pid) return null;
   const pathEnc = relPath.split("/").map(encodeURIComponent).join("/");
   const q = ver ? `?v=${encodeURIComponent(ver)}` : "";
-  const res = await fetch(
-    `/api/projects/${state.currentProjectId}/files/${pathEnc}${q}`,
-    { credentials: "same-origin", cache: "no-store" }
-  );
+  return `/api/projects/${pid}/files/${pathEnc}${q}`;
+}
+
+/** 短期 media_token 直链：浏览器原生流式播放 + Range 拖拽，不必整文件下载完 */
+async function projectMediaStreamUrl(relPath, ver = "", projectId = null) {
+  const pid = projectId || state.currentProjectId;
+  if (!relPath || !pid) return null;
+  const q = new URLSearchParams({ path: relPath });
+  if (ver) q.set("v", String(ver));
+  const r = await api(`/api/projects/${pid}/media-url?${q.toString()}`);
+  return r?.url || null;
+}
+
+async function fetchProjectFileBlobUrl(relPath, ver = "", projectId = null) {
+  const pid = projectId || state.currentProjectId;
+  if (!relPath || !pid) return null;
+  const cacheKey = `${relPath}::${ver}`;
+  if (_fileBlobCache.has(cacheKey)) return _fileBlobCache.get(cacheKey);
+  const urlPath = projectFileUrl(relPath, ver, pid);
+  if (!urlPath) return null;
+  const res = await fetch(urlPath, { credentials: "same-origin", cache: "no-store" });
   if (!res.ok) return null;
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
@@ -521,30 +563,45 @@ function bindZoomableImages(root) {
   });
 }
 
-async function hydrateProtectedVideos(root) {
+async function hydrateProtectedVideos(root, projectId = null) {
+  const pid = projectId || state.currentProjectId;
   const vids = root.querySelectorAll("video[data-file]");
   await Promise.all(
     Array.from(vids).map(async (vid) => {
       const rel = vid.getAttribute("data-file");
       if (!rel) return;
       const ver = vid.getAttribute("data-file-ver") || "";
-      const hydratedKey = `${rel}::${ver}`;
+      const hydratedKey = `${rel}::stream::${ver}`;
       if (vid.dataset.hydrated === hydratedKey && vid.src) return;
       const errEl = vid.parentElement?.querySelector(".video-load-err");
-      if (errEl) errEl.textContent = "";
-      const url = await fetchProjectFileBlobUrl(rel, ver);
-      if (url) {
+      const setMsg = (t) => {
+        if (errEl) errEl.textContent = t || "";
+      };
+      setMsg("正在打开流式播放…");
+      try {
+        // 短期 token 直链：边下边播，可拖拽进度（不必整文件下完）
+        const url = await projectMediaStreamUrl(rel, ver, pid);
+        if (!url) {
+          setMsg("无法签发播放链接。");
+          return;
+        }
         vid.onerror = () => {
-          if (errEl) {
-            errEl.textContent =
-              "视频文件无法播放（可能生成中断导致 MP4 不完整，请重新生成该镜视频）。";
-          }
+          setMsg("视频无法播放（链接失效或文件损坏，请关闭后重试）。");
         };
+        const onReady = () => {
+          setMsg("可边播边拖拽进度条");
+          setTimeout(() => setMsg(""), 2500);
+          vid.removeEventListener("loadeddata", onReady);
+        };
+        vid.addEventListener("loadeddata", onReady);
+        vid.preload = "auto";
         vid.src = url;
         vid.dataset.hydrated = hydratedKey;
         vid.load();
-      } else if (errEl) {
-        errEl.textContent = "无法加载视频文件（404 或未登录）。";
+        const dl = root.querySelector("#finalDownloadLink");
+        if (dl) dl.href = url;
+      } catch (e) {
+        setMsg(`无法加载视频：${e.message || e}`);
       }
     })
   );
@@ -625,12 +682,6 @@ function closeFinalVideoViewer() {
 }
 
 async function openFinalVideoViewer(episodeId) {
-  const ep = await api(`/api/episodes/${episodeId}`);
-  const d = ep.production || {};
-  if (!d.video_ready || !d.video_path) {
-    alert("本集尚无成片文件");
-    return;
-  }
   let vm = document.getElementById("videoViewer");
   if (!vm) {
     vm = document.createElement("div");
@@ -641,18 +692,46 @@ async function openFinalVideoViewer(episodeId) {
     });
     document.body.appendChild(vm);
   }
+  // 先弹出窗口，避免等 API 时像“点了没反应”
   vm.classList.remove("hidden");
-  const ver = productionFileVer(ep, d.video_path);
+  vm.innerHTML = `<div class="modal-box modal-box--video">
+    <div class="modal-episode-head">
+      <h2>成片加载中…</h2>
+      <button type="button" class="modal-close" id="closeVideoViewer" title="关闭" aria-label="关闭">×</button>
+    </div>
+    <p class="muted video-load-err">正在读取成片信息…</p>
+  </div>`;
+  document.getElementById("closeVideoViewer").onclick = () => closeFinalVideoViewer();
+
+  let ep;
+  try {
+    ep = await api(`/api/episodes/${episodeId}`);
+  } catch (e) {
+    const err = vm.querySelector(".video-load-err");
+    if (err) err.textContent = `读取失败：${e.message || e}`;
+    return;
+  }
+  if (ep.project_id) state.currentProjectId = ep.project_id;
+  const d = ep.production || {};
+  const rel = (d.video_path || ep.video_path || "").trim();
+  if (!d.video_ready || !rel) {
+    const err = vm.querySelector(".video-load-err");
+    if (err) err.textContent = "本集尚无成片文件（数据库未标记 video_ready）";
+    return;
+  }
+  const ver = productionFileVer(ep, rel);
   vm.innerHTML = `<div class="modal-box modal-box--video">
     <div class="modal-episode-head">
       <h2>成片 · EP${String(ep.ep_num).padStart(2, "0")} ${esc(ep.title)}</h2>
       <button type="button" class="modal-close" id="closeVideoViewer" title="关闭" aria-label="关闭">×</button>
     </div>
-    <video controls playsinline class="final-video-player final-video-player--fullscreen" data-file="${esc(d.video_path)}" data-file-ver="${esc(ver)}"></video>
-    <p class="muted final-video-path">${esc(d.video_path)}</p>
+    <p class="muted video-load-err">正在打开流式播放…</p>
+    <video controls playsinline preload="auto" class="final-video-player final-video-player--fullscreen" data-file="${esc(rel)}" data-file-ver="${esc(ver)}"></video>
+    <p class="muted final-video-path">路径：${esc(rel)}</p>
+    <p><a class="btn sm" id="finalDownloadLink" href="#" download="EP${String(ep.ep_num).padStart(2, "0")}_final.mp4">下载成片</a></p>
   </div>`;
   document.getElementById("closeVideoViewer").onclick = () => closeFinalVideoViewer();
-  await hydrateProtectedVideos(vm);
+  await hydrateProtectedVideos(vm, ep.project_id || state.currentProjectId);
 }
 
 function bindViewFinalEvents() {
@@ -835,8 +914,7 @@ function openShotVideoGenChoice(episodeId, shotNum) {
     <h3>镜 ${shotNum} · 图生视频</h3>
     <p class="muted regen-hint">使用本镜已保存的分镜图 PNG 做图生视频（约 8–15 分钟/镜）。若没有分镜图请先点「生成分镜图」。</p>
     <div class="regen-actions regen-actions--stack">
-      <button type="button" class="btn primary" id="vidGenAudio">含配音 + 环境声 + BGM</button>
-      <button type="button" class="btn" id="vidGenSilent">仅无声画面</button>
+      <button type="button" class="btn primary" id="vidGenAudio">生成本镜视频（云 GPU H3）</button>
       <button type="button" class="btn muted-btn" id="vidGenCancel">取消</button>
     </div>
   </div>`;
@@ -861,7 +939,6 @@ function openShotVideoGenChoice(episodeId, shotNum) {
     }
   };
   overlay.querySelector("#vidGenAudio").onclick = () => void run(true);
-  overlay.querySelector("#vidGenSilent").onclick = () => void run(false);
 }
 
 function renderStoryboardGallery(ep) {
@@ -1098,15 +1175,58 @@ async function loadProjects() {
 
 function renderProjectNav() {
   const nav = document.getElementById("projectNav");
+  const protectedIds = new Set([
+    "78be2a4b-282c-4e4b-8a3e-18f4d076149b",
+    "d7e69d56-8592-42a9-8fb3-febe68b8f64b",
+  ]);
   nav.innerHTML = state.projects
-    .map(
-      (p) =>
-        `<button type="button" class="nav-item ${p.id === state.currentProjectId ? "active" : ""}" data-id="${p.id}">${esc(p.name)}</button>`
-    )
+    .map((p) => {
+      const isProt =
+        protectedIds.has(p.id) || (p.name || "").trim() === "冰镜";
+      const delBtn = isProt
+        ? ""
+        : `<button type="button" class="nav-del" data-del-id="${esc(p.id)}" data-del-name="${esc(p.name)}" title="删除短剧">删除</button>`;
+      return `<div class="nav-item-row ${p.id === state.currentProjectId ? "active" : ""}" data-id="${esc(p.id)}">
+          <button type="button" class="nav-item" data-open-id="${esc(p.id)}" title="${esc(p.name)}">${esc(p.name)}</button>
+          ${delBtn}
+        </div>`;
+    })
     .join("");
-  nav.querySelectorAll(".nav-item").forEach((btn) => {
-    btn.onclick = () => openProject(btn.dataset.id);
+  nav.querySelectorAll("[data-open-id]").forEach((btn) => {
+    btn.onclick = () => openProject(btn.dataset.openId);
   });
+  nav.querySelectorAll("[data-del-id]").forEach((btn) => {
+    btn.onclick = (ev) => {
+      ev.stopPropagation();
+      void deleteProject(btn.dataset.delId, btn.dataset.delName || "");
+    };
+  });
+}
+
+async function deleteProject(id, name) {
+  if (!id) return;
+  const label = name || id.slice(0, 8);
+  if (!confirm(`确定删除短剧「${label}」？\n将清除该项目的剧本镜头、人物场景与全部图片/视频，且不可恢复。`)) {
+    return;
+  }
+  try {
+    await api(`/api/projects/${id}`, { method: "DELETE" });
+    if (state.currentProjectId === id) {
+      state.currentProjectId = null;
+      state.pipeline = null;
+      clearInterval(state.pollTimer);
+    }
+    await loadProjects();
+    if (state.currentProjectId) {
+      await openProject(state.currentProjectId);
+    } else if (state.projects.length) {
+      await openProject(state.projects[0].id);
+    } else {
+      await renderMain(true);
+    }
+  } catch (e) {
+    alert(`删除失败：${e.message || e}`);
+  }
 }
 
 async function openProject(id) {
@@ -1135,7 +1255,14 @@ function startPoll() {
     }
     if (state.episodeModalOpen && state.episodeModalId) {
       if (state._epModalWasBusy && !busy) {
-        invalidateProjectFileCache();
+        // 任务结束只失效视频缓存；保留分镜图 blob，避免「视频跑完图也没了」
+        const epCache = state._epModalLastEp;
+        const vids = (epCache?.shots || [])
+          .map((s) => (s.video_path || "").trim())
+          .filter(Boolean);
+        if (epCache?.video_path) vids.push(epCache.video_path);
+        if (vids.length) vids.forEach((p) => invalidateProjectFileCache(p));
+        else invalidateProjectFileCache();
         state.epModalAssetSig = "";
       }
       state._epModalWasBusy = busy;
@@ -1227,7 +1354,43 @@ async function renderMain(full = true) {
           `<option value="${esc(b.id)}" ${sbBack === b.id ? "selected" : ""}>${esc(b.label)}</option>`
       )
       .join("");
-    body = `<div class="card"><h3>OhMyGPT 分镜出图</h3>
+    const vb = state.config?.video_backend || {};
+    const vbActive = vb.active || vb.backend || "comfy";
+    const vbActiveLabel =
+      vbActive === "ppio" ? "PPIO Async" : "云 GPU ComfyUI（MiniMax H3）";
+    const vbOpts = (vb.backends || [
+      { id: "comfy", label: "云 GPU ComfyUI（MiniMax H3）" },
+      { id: "ppio", label: "PPIO Serverless Endpoint" },
+    ])
+      .filter((b) => b.id !== "minimax" && !b.disabled)
+      .map(
+        (b) =>
+          `<option value="${esc(b.id)}" ${vb.backend === b.id || (!vb.backend && b.id === "comfy") ? "selected" : ""}>${esc(b.label)}${b.ready === false ? "（密钥未配）" : ""}</option>`
+      )
+      .join("");
+    body = `<div class="card"><h3>视频生成后端</h3>
+      <p class="muted">成片 / 图生视频走云 GPU Comfy（MiniMax H3 本地推理）。<strong>官方 MiniMax API 已彻底关闭</strong>。</p>
+      <label>当前后端
+        <select id="videoBackendSelect">${vbOpts}</select>
+      </label>
+      <p class="muted" style="font-size:0.78rem;margin:0.25rem 0 0.65rem">实际生效：<strong>${esc(vbActiveLabel)}</strong>${vb.note ? " · " + esc(vb.note) : ""}</p>
+      <h4 style="margin:0.85rem 0 0.35rem">PPIO（可选）</h4>
+      <label>PPIO Endpoint Key（形如 <code>id-app</code>）
+        <input id="ppioEndpointKey" value="${esc(vb.ppio?.endpoint_key || "9bbe8e4bf9c2c122-duan")}" placeholder="9bbe8e4bf9c2c122-duan"/>
+      </label>
+      <label>PPIO Async Base
+        <input id="ppioAsyncBase" value="${esc(vb.ppio?.async_base || "https://async-public.serverless.ppinfra.com/v1")}"/>
+      </label>
+      <label>PPIO API Key
+        <input type="password" id="ppioApiKey" autocomplete="new-password" placeholder="${vb.ppio?.key_configured ? `已保存 ${esc(vb.ppio.key_hint)}，留空不修改` : "粘贴 sk_…"}"/>
+      </label>
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin:0.75rem 0 0">
+        <button type="button" class="btn primary" id="saveVideoBackend">保存视频后端</button>
+        <button type="button" class="btn" id="clearMinimaxKey">清除 MiniMax Key</button>
+        <button type="button" class="btn" id="clearPpioKey">清除 PPIO Key</button>
+      </div>
+    </div>
+    <div class="card"><h3>OhMyGPT 分镜出图</h3>
       <p class="muted">密钥保存在服务器数据库，不会写进代码仓库。接口文档：<a href="https://docs.ohmygpt.com/docs/image-generation" target="_blank" rel="noopener">OhMyGPT 图像生成</a>（OpenAI 兼容 <code>/v1/images/generations</code>）。</p>
       <label>API Base URL
         <input id="ohmygptBase" value="${esc(oh.api_base || "https://api.ohmygpt.com/v1")}" placeholder="https://api.ohmygpt.com/v1"/>
@@ -1242,9 +1405,9 @@ async function renderMain(full = true) {
         <button type="button" class="btn" id="clearOhmygptKey">清除已存密钥</button>
       </div>
       <h4 style="margin:0.75rem 0 0.35rem">OhMyGPT 全剧脚本（聊天模型）</h4>
-      <p class="muted" style="font-size:0.78rem;margin:0 0 0.5rem">推荐 <code>deepseek-chat</code> 写中文分镜；<code>gpt-4o</code> JSON 更稳。会写入 <code>web/data/epXX.json</code> 并同步镜头表，<strong>不会</strong>自动出分镜图/视频。</p>
+      <p class="muted" style="font-size:0.78rem;margin:0 0 0.5rem">默认 <code>gpt-6-astra</code>（最新旗舰）；备选 <code>gpt-6.1-sol</code> / <code>deepseek-chat</code>。会写入 <code>web/data/epXX.json</code> 并同步镜头表，<strong>不会</strong>自动出分镜图/视频。</p>
       <label>脚本模型
-        <select id="scriptLlmModel">${(state.config?.script_llm_models || [{ id: "deepseek-chat", label: "deepseek-chat" }])
+        <select id="scriptLlmModel">${(state.config?.script_llm_models || [{ id: "gpt-6-astra", label: "gpt-6-astra" }])
           .map((m) => `<option value="${esc(m.id)}">${esc(m.label || m.id)}</option>`)
           .join("")}</select>
       </label>
@@ -1282,9 +1445,19 @@ async function renderMain(full = true) {
       <h4 style="margin:1rem 0 0.35rem">全剧固定音色（20 集共用，保存后同步到「人物库」）</h4>
       <p class="muted" style="font-size:0.78rem;margin:0 0 0.5rem">对白里的角色名须与下表一致（如 凌川、旁白、神秘黑影）。</p>
       ${renderVoiceCastTable(prefs.voice_cast, { editable: true })}
-      <label>输出分辨率（宽×高，改后需重新出图）<span class="grid2" style="display:grid;gap:0.5rem">
+      <h4 style="margin:1rem 0 0.35rem">分辨率（分镜图 / 成片可不同）</h4>
+      <p class="muted" style="font-size:0.78rem;margin:0 0 0.5rem">项目展示尺寸默认作回退；分镜图与成片可分别指定。成片会再按 H3 短边规则对齐（最低约 352）。</p>
+      <label>项目展示（宽×高）<span class="grid2" style="display:grid;gap:0.5rem">
         <input type="number" id="projW" value="${proj.width}" step="32"/>
         <input type="number" id="projH" value="${proj.height}" step="32"/>
+      </span></label>
+      <label>分镜图分辨率（宽×高，0=用项目展示）<span class="grid2" style="display:grid;gap:0.5rem">
+        <input type="number" id="stillW" value="${Number(prefs.still_width) || 0}" step="32" min="0"/>
+        <input type="number" id="stillH" value="${Number(prefs.still_height) || 0}" step="32" min="0"/>
+      </span></label>
+      <label>成片/图生视频分辨率（宽×高，0=用项目展示）<span class="grid2" style="display:grid;gap:0.5rem">
+        <input type="number" id="videoW" value="${Number(prefs.video_width) || 0}" step="32" min="0"/>
+        <input type="number" id="videoH" value="${Number(prefs.video_height) || 0}" step="32" min="0"/>
       </span></label>
       <button class="btn primary" id="saveProduction">保存全局设置</button>
     </div>`;
@@ -1377,6 +1550,56 @@ async function renderMain(full = true) {
 }
 
 function bindProductionEvents() {
+  const saveVb = document.getElementById("saveVideoBackend");
+  if (saveVb) {
+    saveVb.onclick = async () => {
+      const payload = {
+        backend: document.getElementById("videoBackendSelect")?.value || "comfy",
+        ppio_endpoint_key: document.getElementById("ppioEndpointKey")?.value?.trim() || undefined,
+        ppio_async_base: document.getElementById("ppioAsyncBase")?.value?.trim() || undefined,
+        clear_minimax_key: true,
+      };
+      const k = document.getElementById("ppioApiKey")?.value?.trim();
+      if (k) payload.ppio_api_key = k;
+      const r = await api("/api/settings/video-backend", {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+      state.config.video_backend = r;
+      const keyEl = document.getElementById("ppioApiKey");
+      if (keyEl) keyEl.value = "";
+      const activeLabel = r.active === "ppio" ? "PPIO" : "云 GPU Comfy";
+      alert(`视频后端已保存（当前生效：${activeLabel}；官方 MiniMax API 已关闭）`);
+      renderMain();
+      void refreshComfyStatus?.();
+    };
+  }
+  const clearMm = document.getElementById("clearMinimaxKey");
+  if (clearMm) {
+    clearMm.onclick = async () => {
+      if (!confirm("确定清除已保存的 MiniMax API Key？")) return;
+      const r = await api("/api/settings/video-backend", {
+        method: "PUT",
+        body: JSON.stringify({ clear_minimax_key: true }),
+      });
+      state.config.video_backend = r;
+      alert("已清除 MiniMax Key");
+      renderMain();
+    };
+  }
+  const clearPpio = document.getElementById("clearPpioKey");
+  if (clearPpio) {
+    clearPpio.onclick = async () => {
+      if (!confirm("确定清除已保存的 PPIO API Key？")) return;
+      const r = await api("/api/settings/video-backend", {
+        method: "PUT",
+        body: JSON.stringify({ clear_ppio_key: true }),
+      });
+      state.config.video_backend = r;
+      alert("已清除 PPIO Key");
+      renderMain();
+    };
+  }
   const saveO = document.getElementById("saveOhmygpt");
   if (saveO) {
     saveO.onclick = async () => {
@@ -1416,7 +1639,7 @@ function bindProductionEvents() {
     runScript.onclick = async () => {
       const fromEp = parseInt(document.getElementById("scriptFromEp")?.value || "1", 10);
       const toEp = parseInt(document.getElementById("scriptToEp")?.value || "20", 10);
-      const model = document.getElementById("scriptLlmModel")?.value || "deepseek-chat";
+      const model = document.getElementById("scriptLlmModel")?.value || "gpt-6-astra";
       const msg = `将用 OhMyGPT（${model}）生成 EP${String(fromEp).padStart(2, "0")}–EP${String(toEp).padStart(2, "0")} 的 web/data/epXX.json，并可选同步镜头表。不会自动出图/视频。继续？`;
       if (!confirm(msg)) return;
       const statusEl = document.getElementById("scriptLlmStatus");
@@ -1463,6 +1686,10 @@ function bindProductionEvents() {
           extra_prefix: document.getElementById("prefExtra").value,
           negative_prompt: document.getElementById("prefNeg").value,
           global_memory: document.getElementById("prefMemory").value,
+          still_width: parseInt(document.getElementById("stillW")?.value || "0", 10) || 0,
+          still_height: parseInt(document.getElementById("stillH")?.value || "0", 10) || 0,
+          video_width: parseInt(document.getElementById("videoW")?.value || "0", 10) || 0,
+          video_height: parseInt(document.getElementById("videoH")?.value || "0", 10) || 0,
           voice_cast: collectVoiceCastFromTable("voiceCastTable"),
         },
       }),
@@ -1522,7 +1749,7 @@ function renderCharacterCards(items, ohmyReady = false) {
         <td class="char-td-voice">
           <select class="char-in-tts-voice" title="全片对白统一用此 OpenAI 音色（与角色名匹配）">
             ${["", "onyx", "echo", "fable", "ash", "nova", "shimmer", "alloy", "verse", "sage", "coral", "ballad"]
-              .map((v) => `<option value="${v}" ${(c.tts_voice || "") === v ? "selected" : ""}>${v || "自动（旁白 onyx / 角色 echo）"}</option>`)
+              .map((v) => `<option value="${v}" ${(c.tts_voice || "") === v ? "selected" : ""}>${v || "自动（旁白 nova 年轻女声 / 角色 echo）"}</option>`)
               .join("")}
           </select>
           <textarea class="char-in-voice-desc" rows="2" placeholder="声音描述；也可写 TTS:onyx">${esc(c.voice_desc || "")}</textarea>
@@ -1772,18 +1999,52 @@ function bindEpisodeListEvents() {
   });
 }
 
+function patchShotMediaCells(editor, ep) {
+  /** 资产签名未变时：只刷新视频按钮；若分镜图丢失显示则就地补回，绝不整表重绘。 */
+  if (!editor) return;
+  const needHydrate = [];
+  for (const s of ep.shots || []) {
+    const tr = editor.querySelector(`tr[data-shot="${s.shot_num}"]`);
+    if (!tr) continue;
+    const imgPath = (s.image_path || "").trim();
+    const vidPath = (s.video_path || "").trim();
+    if (imgPath) tr.dataset.imagePath = imgPath;
+    if (vidPath) tr.dataset.videoPath = vidPath;
+    const vidCell = tr.querySelector(".shot-video-cell");
+    if (vidCell) vidCell.innerHTML = renderShotVideoBtn(ep, s);
+    const wrap = tr.querySelector(".shot-still-wrap");
+    if (wrap && imgPath) {
+      const img = wrap.querySelector("img.shot-thumb");
+      const shown = (img?.getAttribute("data-file") || "").trim();
+      const broken = !img || !img.src || img.classList.contains("img-error") || shown !== imgPath;
+      if (broken) {
+        wrap.innerHTML = renderShotStillImg(ep, s);
+        needHydrate.push(wrap);
+      }
+    } else if (wrap && !imgPath) {
+      wrap.innerHTML = `<span class="muted">无</span>`;
+    }
+  }
+  bindViewShotVideoEvents(editor);
+  for (const el of needHydrate) void hydrateProtectedImages(el);
+}
+
 async function refreshEpisodeModal(episodeId) {
   if (!state.episodeModalOpen || state.episodeModalId !== episodeId) return;
   const modal = document.getElementById("modal");
   if (modal.classList.contains("hidden")) return;
   const ep = await api(`/api/episodes/${episodeId}`);
+  state._epModalLastEp = ep;
   const pl = ep.pipeline || {};
   const sig = episodeAssetSignature(ep);
   const banner = modal.querySelector(".ep-status-banner-wrap");
   if (banner) banner.innerHTML = episodeStatusBanner(ep);
   const pipe = modal.querySelector(".pipeline.mb");
   if (pipe) pipe.innerHTML = renderStageList(state.config.stages.episode, pl, "episode");
+  const editor = modal.querySelector("#shotsEditor");
   if (state.epModalAssetSig === sig) {
+    // 进度轮询：只更新状态条；镜头表资产不变则不重绘
+    if (editor) patchShotMediaCells(editor, ep);
     return;
   }
   state.epModalAssetSig = sig;
@@ -1793,9 +2054,10 @@ async function refreshEpisodeModal(episodeId) {
     await hydrateProtectedImages(gal);
     bindViewFinalEvents();
   }
-  const editor = modal.querySelector("#shotsEditor");
   if (editor) {
+    const scrollTop = editor.scrollTop;
     editor.innerHTML = renderShotsEditor(ep);
+    editor.scrollTop = scrollTop;
     await hydrateProtectedImages(editor);
     bindViewShotVideoEvents(editor);
     bindShotTableActions(episodeId);
@@ -1852,14 +2114,15 @@ async function openEpisodeModal(episodeId) {
       <button class="btn primary" id="saveEp">保存本集</button>
       <button class="btn primary" id="jobShot1Still" title="只生成第 1 镜分镜图，不跑整集">生成镜 1 分镜图（单镜）</button>
       <button class="btn" id="jobDrama10" title="按当前镜头表写入导出文件，供 Comfy 使用">导出 Drama10 文件</button>
-      <details class="ep-batch-actions" style="width:100%;margin-top:0.35rem">
-        <summary class="muted" style="cursor:pointer;font-size:0.82rem">整集批量（需二次确认，默认不用）</summary>
+      <details class="ep-batch-actions" open style="width:100%;margin-top:0.35rem">
+        <summary class="muted" style="cursor:pointer;font-size:0.82rem">整集批量（已有图/视频自动跳过）</summary>
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.5rem">
-          <button class="btn sm muted-btn" type="button" id="jobImages">整集分镜出图</button>
-          <button class="btn sm muted-btn" type="button" id="jobVideo" title="H3 带声单镜生成后统一剪辑">整集成片</button>
+          <button class="btn sm" type="button" id="jobImages" title="只补没有 PNG 的镜">① 批量补缺分镜图</button>
+          <button class="btn sm" type="button" id="jobVideo" title="只补没有 mp4 的镜，不自动拼接">② 批量补缺分镜视频</button>
+          <button class="btn sm primary" type="button" id="jobMerge" title="把已有分镜视频按镜号拼成整集成片">③ 合并成片</button>
         </div>
       </details>
-      <p class="muted" style="margin:0.35rem 0 0;font-size:0.82rem;width:100%">推荐：在下方镜头表每一行点「生成此镜分镜图」，一次只出一镜；满意后再生成下一镜或「重新生成视频」。</p>
+      <p class="muted" style="margin:0.35rem 0 0;font-size:0.82rem;width:100%">流程：先补缺分镜图 → 再补缺分镜视频 → 全部有视频后点「合并成片」。单镜重跑仍用镜头表按钮。</p>
     </div>
   </div>`;
 
@@ -1891,27 +2154,58 @@ async function openEpisodeModal(episodeId) {
     await saveEpisodeEditor(episodeId);
     await startJob("storyboard_images", episodeId, { shot_nums: [1] });
   };
-  document.getElementById("jobImages").onclick = () => {
+  document.getElementById("jobImages").onclick = async () => {
     if (
       !confirm(
-        "将依次为整集每一镜出分镜图（API/H3），耗时较长。若只生成某一镜，请用镜头表「生成此镜分镜图」。确定整集？"
+        "批量补缺分镜图：已有 PNG 的镜会跳过，只生成缺失的镜。确定？"
       )
     ) {
       return;
     }
-    void saveEpisodeEditor(episodeId).then(() =>
-      startJob("storyboard_images", episodeId, { confirm_full_episode: true })
-    );
+    try {
+      await saveEpisodeEditor(episodeId);
+      await startJob("storyboard_images", episodeId, {
+        confirm_full_episode: true,
+        skip_existing: true,
+      });
+    } catch (e) {
+      alert(`批量补缺分镜图失败：${e.message || e}`);
+    }
   };
-  document.getElementById("jobVideo").onclick = () => {
+  document.getElementById("jobVideo").onclick = async () => {
     if (
       !confirm(
-        "将生成并拼接全部镜头成片，耗时很长。当前阶段建议只用「镜1 单镜视频」。确定继续整集？"
+        "批量补缺分镜视频：已有 mp4 的镜会跳过，只生成缺失的镜，生成后不自动拼接。确定？"
       )
     ) {
       return;
     }
-    startJob("video", episodeId, { confirm_full_episode: true });
+    try {
+      await saveEpisodeEditor(episodeId);
+      await startJob("video", episodeId, {
+        confirm_full_episode: true,
+        skip_existing: true,
+        auto_concat: false,
+        preview_with_audio: true,
+      });
+    } catch (e) {
+      alert(`批量补缺分镜视频失败：${e.message || e}`);
+    }
+  };
+  document.getElementById("jobMerge").onclick = async () => {
+    if (
+      !confirm(
+        "合并成片：按镜号顺序拼接本集已有分镜视频（不重新生成）。缺镜会失败。确定？"
+      )
+    ) {
+      return;
+    }
+    try {
+      await saveEpisodeEditor(episodeId);
+      await startJob("video", episodeId, { mux_only: true });
+    } catch (e) {
+      alert(`合并成片失败：${e.message || e}`);
+    }
   };
 
   ensureEpisodeModalDelegates();
@@ -2191,7 +2485,7 @@ function renderShotsEditor(ep) {
             <input class="shot-ambience" placeholder="环境声 / BGM 提示" value="${esc(s.ambience || "")}"/>
             <textarea class="shot-continuity" rows="2" placeholder="剧情衔接（可选）">${esc(s.continuity || "")}</textarea>
           </td>
-          <td class="shot-img-cell shot-img-cell--compact">${renderShotStillImg(ep, s)}
+          <td class="shot-img-cell shot-img-cell--compact"><span class="shot-still-wrap">${renderShotStillImg(ep, s)}</span>
             <input type="file" class="shot-file-in" data-shot="${s.shot_num}" accept="image/*" title="上传分镜图"/>
             <button type="button" class="btn sm primary regen-shot" data-shot="${s.shot_num}">① 生成分镜图</button>
             <button type="button" class="btn sm gen-shot-still" data-shot="${s.shot_num}">快速出图（同①）</button>
@@ -2202,7 +2496,7 @@ function renderShotsEditor(ep) {
       })
       .join("")}
     </tbody></table>
-    <p class="muted shot-editor-hint">《冰境》流程：H3 <strong>单镜</strong>带声视频 → 整集剪辑。画面=中文；运镜=英文 H3 提示词。对白示例：<code>旁白[onyx]{史诗}：很久以前…@0.8s</code>；无台词镜：<code>凌川[echo]：（本镜无对白，仅表演）</code></p>
+    <p class="muted shot-editor-hint">H3 <strong>单镜</strong>带声视频 → 整集剪辑。对白示例：<code>旁白[nova]{克制}：我拼命加班三年…@0.6s</code>（nova=年轻女声；史诗男旁白可用 onyx）；无台词：<code>凌川[echo]：（本镜无对白，仅表演）</code></p>
     <button type="button" class="btn sm primary" id="addShotRow">+ 添加镜头</button>`;
 }
 

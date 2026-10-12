@@ -51,13 +51,40 @@ def _queue_counts(queue: Dict[str, Any]) -> tuple[int, int]:
 
 
 def collect_comfy_status() -> Dict[str, Any]:
-    active = _systemd_is_active()
-    props = _systemd_props()
+    try:
+        from .studio_settings import (
+            get_video_backend_settings_public,
+            use_ppio_video,
+            use_minimax_official,
+            active_video_backend,
+        )
+
+        vb = get_video_backend_settings_public()
+        using_ppio = use_ppio_video()
+        using_minimax = use_minimax_official()
+        active_be = active_video_backend()
+    except Exception:
+        vb = {}
+        using_ppio = False
+        using_minimax = False
+        active_be = "comfy"
+
+    if using_minimax:
+        active = "active"
+        props = {"ActiveState": "active", "SubState": "minimax-official"}
+    elif using_ppio:
+        active = "active"
+        props = {"ActiveState": "active", "SubState": "ppio-async"}
+    else:
+        active = _systemd_is_active()
+        props = _systemd_props()
     http_ok = False
     http_error: Optional[str] = None
     queue_running = 0
     queue_pending = 0
-    if active == "active":
+    if using_minimax:
+        http_ok = True
+    elif using_ppio or active == "active":
         try:
             client = ComfyClient()
             client.ping()
@@ -67,6 +94,11 @@ def collect_comfy_status() -> Dict[str, Any]:
         except Exception as e:
             http_error = str(e)
     summary = _status_summary(active, http_ok, props)
+    if using_minimax:
+        mm = (vb.get("minimax") or {})
+        summary = f"MiniMax 官方 · {mm.get('model') or 'H3'} · {mm.get('resolution') or ''}".strip()
+    elif using_ppio:
+        summary = "PPIO Async" + (" · 可达" if http_ok else " · 异常")
     return {
         "unit": COMFY_UNIT,
         "systemd_active": active,
@@ -78,7 +110,16 @@ def collect_comfy_status() -> Dict[str, Any]:
         "queue_running": queue_running,
         "queue_pending": queue_pending,
         "summary": summary,
-        "comfyui_url": os.environ.get("COMFYUI_URL", "http://127.0.0.1:8000"),
+        "video_backend": vb,
+        "comfyui_url": (
+            f"minimax://{(vb.get('minimax') or {}).get('api_base')}"
+            if active_be == "minimax"
+            else (
+                f"ppio://{(vb.get('ppio') or {}).get('endpoint_key')}"
+                if using_ppio
+                else os.environ.get("COMFYUI_URL", "http://127.0.0.1:8000")
+            )
+        ),
         "public_comfyui_url": os.environ.get(
             "PUBLIC_COMFYUI_URL", "http://127.0.0.1:8000"
         ),

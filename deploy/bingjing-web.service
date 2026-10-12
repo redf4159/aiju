@@ -25,8 +25,10 @@ Environment=DRAMA10_BGM_MIX_GAIN=0.72
 Environment=DRAMA10_SPEECH_MIX_GAIN=1.0
 Environment=DRAMA10_SILENT_MEAN_DB=-42
 Environment=DRAMA10_PREVIEW_BGM_GAIN=0.45
-Environment=DRAMA10_WEB_AUDIO_ONLY=1
-Environment=DRAMA10_DEHUM_AF=highpass=f=200,lowpass=11000
+Environment=DRAMA10_WEB_AUDIO_ONLY=0
+# 禁止 Web TTS 混音救急；成片用 MiniMax H3 原生音轨
+Environment=DRAMA10_HUM_FALLBACK_REMUX=0
+Environment=DRAMA10_DEHUM_AF=highpass=f=80,lowpass=12000
 # 分镜静帧：minimax_h3（默认）| sdxl_t2i（需 checkpoints，建议 TILE_ROTATE=0）
 # Environment=STORYBOARD_BACKEND=sdxl_t2i
 # Environment=STORYBOARD_SDXL_CKPT=realisticVisionV60B1_v51VAE.safetensors

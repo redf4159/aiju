@@ -27,6 +27,8 @@ web/output/
 _ssh_*.py
 _fetch_*.py
 _test_comfy_api*.py
+web/_*.py
+web/scripts/_*.py
 
 # IDE / OS
 .idea/

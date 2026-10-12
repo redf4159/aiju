@@ -9,7 +9,18 @@ from typing import Any, Dict, List, Optional
 from . import db
 
 # 冰镜种子项目固定 ID：与服务器上已有 assets 目录对齐，避免每次 seed 换新 UUID
-CANONICAL_BINGJING_PROJECT_ID = "d7e69d56-8592-42a9-8fb3-febe68b8f64b"
+CANONICAL_BINGJING_PROJECT_ID = "78be2a4b-282c-4e4b-8a3e-18f4d076149b"
+# 历史种子 ID（兼容旧路径恢复）
+LEGACY_BINGJING_PROJECT_IDS = frozenset(
+    {
+        CANONICAL_BINGJING_PROJECT_ID,
+        "d7e69d56-8592-42a9-8fb3-febe68b8f64b",
+    }
+)
+
+
+def is_bingjing_project_id(project_id: str) -> bool:
+    return (project_id or "").strip() in LEGACY_BINGJING_PROJECT_IDS
 
 
 def _projects_root() -> Path:
@@ -89,11 +100,13 @@ def read_drama10_export_file(project_id: str, ep_num: int) -> str:
     path = db.project_dir(project_id) / "export" / f"EP{ep_num:02d}_drama10.txt"
     if path.is_file():
         return path.read_text(encoding="utf-8").strip()
-    alt = _best_project_root_for_episode(ep_num, project_id)
-    if alt:
-        path = alt / "export" / f"EP{ep_num:02d}_drama10.txt"
-        if path.is_file():
-            return path.read_text(encoding="utf-8").strip()
+    # 仅冰镜种子项目允许从其它目录找回；其它项目禁止串读，避免台词/风格污染
+    if is_bingjing_project_id(project_id):
+        alt = _best_project_root_for_episode(ep_num, project_id)
+        if alt:
+            path = alt / "export" / f"EP{ep_num:02d}_drama10.txt"
+            if path.is_file():
+                return path.read_text(encoding="utf-8").strip()
     return ""
 
 
@@ -129,14 +142,14 @@ def ensure_episode_assets(project_id: str, episode_id: str, ep_num: int, n_shots
             "",
         )
         return
-    source_root = _best_project_root_for_episode(ep_num, project_id)
-    if not source_root or source_root.resolve() == target_root.resolve():
-        _rehydrate_drama10_from_disk(project_id, episode_id, ep_num, "")
-        return
-    src_ep = source_root / "episodes" / f"ep{ep_num:02d}"
-    src_score = _score_episode_assets(src_ep, ep_num)
-    if src_score > target_score:
-        _copy_episode_assets(src_ep, target_ep, ep_num)
+    # 跨项目拷贝仅用于冰镜种子恢复；新项目（如显卡压测）不得吞并其它剧资产
+    if is_bingjing_project_id(project_id):
+        source_root = _best_project_root_for_episode(ep_num, project_id)
+        if source_root and source_root.resolve() != target_root.resolve():
+            src_ep = source_root / "episodes" / f"ep{ep_num:02d}"
+            src_score = _score_episode_assets(src_ep, ep_num)
+            if src_score > target_score:
+                _copy_episode_assets(src_ep, target_ep, ep_num)
     _rehydrate_drama10_from_disk(project_id, episode_id, ep_num, "")
 
 

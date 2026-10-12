@@ -1,0 +1,238 @@
+{
+  "episode": 2,
+  "title": "雨夜录音（轻量备选）",
+  "script_md": "备选轻量脚本·约40秒·5镜·仅单人+双人，无多人同框。若 EP01 镜头6持续 OOM，用本集对比24G/32G。",
+  "storyboard_md": "01雨夜仰望 02窗边说笑 03录音笔 04拨打电话 05坚定侧脸",
+  "synopsis": "苏晚雨夜发现真爱是骗局，她已录下证据，准备摊牌。",
+  "character_bible": "苏晚：女主苏晚，24岁，黑色长直发，清冷五官，白色简约衬衫，浅灰西裤，全剧同一脸型发型服装，禁止换脸。男主：男主，28岁，精致西装，虚伪温柔笑意，全剧同一脸型发型服装。",
+  "voice_cast": [
+    {
+      "role": "旁白",
+      "tts_voice": "shimmer",
+      "voice_desc": "年轻女性画外旁白，冷静克制。TTS:shimmer",
+      "emotion": "隐忍、决断",
+      "scope": "series"
+    },
+    {
+      "role": "苏晚",
+      "tts_voice": "shimmer",
+      "voice_desc": "24岁女性，清冷克制，情绪被压抑后爆发。TTS:shimmer",
+      "emotion": "震惊、冷静、反击",
+      "scope": "series"
+    },
+    {
+      "role": "男主",
+      "tts_voice": "onyx",
+      "voice_desc": "虚伪温柔的年轻男性。TTS:onyx",
+      "emotion": "冷酷",
+      "scope": "episode"
+    }
+  ],
+  "characters": [
+    {
+      "name": "旁白",
+      "role_note": "女主画外叙述，不对口型",
+      "visual_prompt": "无画面形象，仅声音",
+      "tts_voice": "shimmer",
+      "voice_desc": "年轻女性画外旁白，冷静克制"
+    },
+    {
+      "name": "苏晚",
+      "role_note": "女主，被开除后反击的白领",
+      "visual_prompt": "女主苏晚，24岁，黑色长直发，清冷五官，白色简约衬衫，浅灰西裤，全剧同一脸型发型服装，禁止换脸",
+      "tts_voice": "shimmer",
+      "voice_desc": "24岁女性，清冷克制"
+    },
+    {
+      "name": "男主",
+      "role_note": "轻量脚本反派男主",
+      "visual_prompt": "男主，28岁，精致西装，虚伪温柔笑意，全剧同一脸型发型服装",
+      "tts_voice": "onyx",
+      "voice_desc": "虚伪温柔的年轻男性"
+    },
+    {
+      "name": "另一个女人",
+      "role_note": "窗边群戏配角",
+      "visual_prompt": "另一个女人，妆造精致，与男主说笑，远景可略虚化",
+      "tts_voice": "nova",
+      "voice_desc": "无对白"
+    }
+  ],
+  "scenes": [
+    {
+      "code": "SC-L1",
+      "name": "雨夜楼下",
+      "visual_prompt": "城市雨夜街道，仰望高楼灯光，湿地面反光"
+    },
+    {
+      "code": "SC-L2",
+      "name": "楼上窗边",
+      "visual_prompt": "豪华公寓窗边，暖黄室内光，雨夜城市背景"
+    },
+    {
+      "code": "SC-L3",
+      "name": "雨夜侧脸",
+      "visual_prompt": "雨夜街角侧光，人物侧脸定场"
+    }
+  ],
+  "production": {
+    "target_duration_sec": 40,
+    "aspect_ratio": "9:16",
+    "resolution": "352x640",
+    "vram_test_notes": "低负载对照；无多人同框；分辨率352x640"
+  },
+  "style_prefix": "海外爆款国漫风格，竖屏9比16，352x640，干净线条，电影感办公室光影，人物一致性强，大动作快节奏，画面无文字无字幕无Logo，单镜头全屏动画",
+  "visual_style": "Chinese manhua / anime drama style, vertical 9:16 352x640, clean lines, cinematic office lighting, consistent characters, dynamic action, no on-screen text, no logo",
+  "audio_sync": {
+    "mouth_lag_sec": 0.5,
+    "drift_per_shot_sec": 0.1
+  },
+  "shots": [
+    {
+      "id": 1,
+      "duration_sec": 6,
+      "title": "雨夜仰望",
+      "scene_code": "SC-L1",
+      "scene": "竖屏9比16。雨夜：女主苏晚，24岁，黑色长直发，清冷五官，白色简约衬衫，浅灰西裤，全剧同一脸型发型服装，禁止换脸站在楼下，看着楼上灯光；国漫竖屏，湿地面反光",
+      "visual": "竖屏9比16。雨夜：女主苏晚，24岁，黑色长直发，清冷五官，白色简约衬衫，浅灰西裤，全剧同一脸型发型服装，禁止换脸站在楼下，看着楼上灯光；国漫竖屏，湿地面反光",
+      "continuity": "竖屏9比16。雨夜：女主苏晚，24岁，黑色长直发，清冷五官，白色简约衬衫，浅灰西裤，全剧同一脸型发型服装，禁止换脸站在楼下，看着楼上灯光；国漫竖屏，湿地面反光",
+      "camera": "中全景略仰，缓慢上移",
+      "lighting": "雨夜冷蓝街灯+楼上暖窗",
+      "motion": "Vertical 9:16 Chinese manhua, Su Wan in rain at night looking up at apartment lights, wet street reflections, slow tilt up, consistent face, no text",
+      "performance": "女主伫立；旁白画外。",
+      "ambience": "Night rain, distant traffic",
+      "sfx": "雨声",
+      "characters_in_shot": [
+        "苏晚"
+      ],
+      "still_prompt": "静态分镜概念图，单镜头全屏国漫画面，竖屏9比16。雨夜：女主苏晚，24岁，黑色长直发，清冷五官，白色简约衬衫，浅灰西裤，全剧同一脸型发型服装，禁止换脸站在楼下，看着楼上灯光；国漫竖屏，湿地面反光",
+      "still_negative": "写实照片, 3D渲染糊脸, 文字, 水印, 畸形手指, 多余手指, 肢体扭曲, photorealistic, subtitle, logo, deformed hands, extra fingers, warped limbs",
+      "voices": [
+        {
+          "role": "旁白",
+          "text": "我以为的真爱，只是一场骗局。",
+          "start_sec": 0.5,
+          "tts_voice": "nova",
+          "emotion": "失落"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "duration_sec": 8,
+      "title": "窗边说笑",
+      "scene_code": "SC-L2",
+      "scene": "竖屏9比16。楼上窗边：男主，28岁，精致西装，虚伪温柔笑意，全剧同一脸型发型服装和另一个女人，妆造精致，与男主说笑，远景可略虚化说笑；双人同框，无第三人，国漫",
+      "visual": "竖屏9比16。楼上窗边：男主，28岁，精致西装，虚伪温柔笑意，全剧同一脸型发型服装和另一个女人，妆造精致，与男主说笑，远景可略虚化说笑；双人同框，无第三人，国漫",
+      "continuity": "竖屏9比16。楼上窗边：男主，28岁，精致西装，虚伪温柔笑意，全剧同一脸型发型服装和另一个女人，妆造精致，与男主说笑，远景可略虚化说笑；双人同框，无第三人，国漫",
+      "camera": "中景，轻微横移",
+      "lighting": "暖黄室内光，窗外雨夜虚化",
+      "motion": "Vertical 9:16 Chinese manhua, man in suit by window chatting and laughing with another stylish woman, two-shot only, warm interior light, rainy city bokeh, no crowd, no text",
+      "performance": "男主对口型；女伴轻笑。",
+      "ambience": "Muffled indoor room tone, rain on glass",
+      "sfx": "",
+      "characters_in_shot": [
+        "男主",
+        "另一个女人"
+      ],
+      "still_prompt": "静态分镜概念图，单镜头全屏国漫画面，竖屏9比16。楼上窗边：男主，28岁，精致西装，虚伪温柔笑意，全剧同一脸型发型服装和另一个女人，妆造精致，与男主说笑，远景可略虚化说笑；双人同框，无第三人，国漫",
+      "still_negative": "写实照片, 3D渲染糊脸, 文字, 水印, 畸形手指, 多余手指, 肢体扭曲, photorealistic, subtitle, logo, deformed hands, extra fingers, warped limbs",
+      "voices": [
+        {
+          "role": "男主",
+          "text": "等她签完财产协议就分手。",
+          "start_sec": 0.4,
+          "tts_voice": "onyx",
+          "emotion": "虚伪、冷酷"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "duration_sec": 8,
+      "title": "录音笔",
+      "scene_code": "SC-L1",
+      "scene": "竖屏9比16。特写/近景：女主苏晚，24岁，黑色长直发，清冷五官，白色简约衬衫，浅灰西裤，全剧同一脸型发型服装，禁止换脸握紧手里录音笔；国漫，手部与表情",
+      "visual": "竖屏9比16。特写/近景：女主苏晚，24岁，黑色长直发，清冷五官，白色简约衬衫，浅灰西裤，全剧同一脸型发型服装，禁止换脸握紧手里录音笔；国漫，手部与表情",
+      "continuity": "竖屏9比16。特写/近景：女主苏晚，24岁，黑色长直发，清冷五官，白色简约衬衫，浅灰西裤，全剧同一脸型发型服装，禁止换脸握紧手里录音笔；国漫，手部与表情",
+      "camera": "近景推到录音笔",
+      "lighting": "雨夜侧光",
+      "motion": "Vertical 9:16 Chinese manhua, Su Wan gripping a voice recorder tightly, close-up hands and determined face, rainy night, push-in, no text",
+      "performance": "苏晚对口型，握紧录音笔。",
+      "ambience": "Close rain, tense breath",
+      "sfx": "",
+      "characters_in_shot": [
+        "苏晚"
+      ],
+      "still_prompt": "静态分镜概念图，单镜头全屏国漫画面，竖屏9比16。特写/近景：女主苏晚，24岁，黑色长直发，清冷五官，白色简约衬衫，浅灰西裤，全剧同一脸型发型服装，禁止换脸握紧手里录音笔；国漫，手部与表情",
+      "still_negative": "写实照片, 3D渲染糊脸, 文字, 水印, 畸形手指, 多余手指, 肢体扭曲, photorealistic, subtitle, logo, deformed hands, extra fingers, warped limbs",
+      "voices": [
+        {
+          "role": "苏晚",
+          "text": "幸好，我全部录下来了。",
+          "start_sec": 0.4,
+          "tts_voice": "nova",
+          "emotion": "决断"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "duration_sec": 10,
+      "title": "拨打电话",
+      "scene_code": "SC-L1",
+      "scene": "竖屏9比16。中景：女主苏晚，24岁，黑色长直发，清冷五官，白色简约衬衫，浅灰西裤，全剧同一脸型发型服装，禁止换脸转身，拿出手机拨打电话；国漫，单人动作",
+      "visual": "竖屏9比16。中景：女主苏晚，24岁，黑色长直发，清冷五官，白色简约衬衫，浅灰西裤，全剧同一脸型发型服装，禁止换脸转身，拿出手机拨打电话；国漫，单人动作",
+      "continuity": "竖屏9比16。中景：女主苏晚，24岁，黑色长直发，清冷五官，白色简约衬衫，浅灰西裤，全剧同一脸型发型服装，禁止换脸转身，拿出手机拨打电话；国漫，单人动作",
+      "camera": "中景跟随转身",
+      "lighting": "街灯轮廓光",
+      "motion": "Vertical 9:16 Chinese manhua, Su Wan turns and dials phone in rain night street, single character, fluid turn motion, consistent face, no text",
+      "performance": "转身拨号；本镜可无对白或极短气声。",
+      "ambience": "Rain, phone unlock tap",
+      "sfx": "拨号音",
+      "characters_in_shot": [
+        "苏晚"
+      ],
+      "still_prompt": "静态分镜概念图，单镜头全屏国漫画面，竖屏9比16。中景：女主苏晚，24岁，黑色长直发，清冷五官，白色简约衬衫，浅灰西裤，全剧同一脸型发型服装，禁止换脸转身，拿出手机拨打电话；国漫，单人动作",
+      "still_negative": "写实照片, 3D渲染糊脸, 文字, 水印, 畸形手指, 多余手指, 肢体扭曲, photorealistic, subtitle, logo, deformed hands, extra fingers, warped limbs",
+      "voices": [
+        {
+          "role": "苏晚",
+          "text": "",
+          "note": "本镜以动作与拨号音为主",
+          "tts_voice": "nova",
+          "emotion": "决断"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "duration_sec": 8,
+      "title": "坚定侧脸",
+      "scene_code": "SC-L3",
+      "scene": "竖屏9比16。侧脸：女主苏晚，24岁，黑色长直发，清冷五官，白色简约衬衫，浅灰西裤，全剧同一脸型发型服装，禁止换脸眼神坚定；国漫氛围光影（字幕后期：下一集，摊牌）",
+      "visual": "竖屏9比16。侧脸：女主苏晚，24岁，黑色长直发，清冷五官，白色简约衬衫，浅灰西裤，全剧同一脸型发型服装，禁止换脸眼神坚定；国漫氛围光影（字幕后期：下一集，摊牌）",
+      "continuity": "竖屏9比16。侧脸：女主苏晚，24岁，黑色长直发，清冷五官，白色简约衬衫，浅灰西裤，全剧同一脸型发型服装，禁止换脸眼神坚定；国漫氛围光影（字幕后期：下一集，摊牌）",
+      "camera": "侧脸近景，缓慢推近",
+      "lighting": "雨夜侧逆光",
+      "motion": "Vertical 9:16 Chinese manhua profile close-up of Su Wan determined eyes, slow push-in, rainy night rim light, no burned-in subtitle, no text",
+      "performance": "旁白画外；女主口型闭合，眼神坚定。",
+      "ambience": "Soft rain, resolve silence",
+      "sfx": "",
+      "characters_in_shot": [
+        "苏晚"
+      ],
+      "still_prompt": "静态分镜概念图，单镜头全屏国漫画面，竖屏9比16。侧脸：女主苏晚，24岁，黑色长直发，清冷五官，白色简约衬衫，浅灰西裤，全剧同一脸型发型服装，禁止换脸眼神坚定；国漫氛围光影（字幕后期：下一集，摊牌）",
+      "still_negative": "写实照片, 3D渲染糊脸, 文字, 水印, 畸形手指, 多余手指, 肢体扭曲, photorealistic, subtitle, logo, deformed hands, extra fingers, warped limbs",
+      "voices": [
+        {
+          "role": "旁白",
+          "text": "今天，我不会再任人欺负。",
+          "start_sec": 0.5,
+          "tts_voice": "nova",
+          "emotion": "坚定"
+        }
+      ]
+    }
+  ]
+}

@@ -31,6 +31,29 @@ def _on_screen_dialogue_voices(voices: list) -> list:
     ]
 
 
+def _dialogue_facing_hint(shot: dict[str, Any]) -> str:
+    """对白朝向：说话人看向听话人，禁止正对镜头念白。"""
+    dialogue = _on_screen_dialogue_voices(shot.get("voices") or [])
+    if not dialogue:
+        return ""
+    roles: List[str] = []
+    for v in dialogue:
+        r = (v.get("role") or "").strip()
+        if r and r not in roles:
+            roles.append(r)
+    if len(roles) >= 2:
+        a, b = roles[0], roles[1]
+        return (
+            f"站位对谈轴：{a}与{b}互为左右对位，说话时脸与肩朝向对方，"
+            f"眼线落在对方脸/肩；禁止任何人正对镜头念台词。"
+        )
+    role = roles[0] if roles else "角色"
+    return (
+        f"{role}朝向画内对谈对象或事件方向说话，眼线不看镜头；"
+        f"禁止正对镜头念白。"
+    )
+
+
 def _lip_motion_hint(shot: dict[str, Any]) -> str:
     raw = shot.get("voices") or []
     dialogue = _on_screen_dialogue_voices(raw)
@@ -39,6 +62,8 @@ def _lip_motion_hint(shot: dict[str, Any]) -> str:
         for v in raw
         if isinstance(v, dict)
     )
+    face = _dialogue_facing_hint({"voices": raw})
+    face_bit = f"{face} " if face else ""
     if not dialogue:
         if has_narrator:
             return _narrator_only_lip_hint()
@@ -48,10 +73,10 @@ def _lip_motion_hint(shot: dict[str, Any]) -> str:
         if role in ("大臣们",):
             return "多名跪拜大臣齐声朝贺，群体张口齐呼；非说话者闭口。"
         extra = "画外旁白不对口型。" if has_narrator else ""
-        return f"仅{role}口型随画内对白开合，其他人物闭口。{extra}"
+        return f"{face_bit}仅{role}口型随画内对白开合，其他人物闭口。{extra}"
     seq = "→".join((v.get("role") or "角色") for v in dialogue)
     extra = "画外旁白不对口型。" if has_narrator else ""
-    return f"画内对白顺序({seq})，同一时刻仅一人口型在动。{extra}"
+    return f"{face_bit}画内对白顺序({seq})，同一时刻仅一人口型在动。{extra}"
 
 
 def _norm_text(s: str) -> str:
@@ -167,12 +192,22 @@ def _pick_continuity_text(shot: dict[str, Any], scene_text: str) -> str:
         nc = _norm_text(c)
         ns = _norm_text(scene_text)
         if nc not in ns and ns not in nc:
-            return c
-    return (
-        f"本镜为全片第{sid}镜，与前后镜处于同一世界观与连续剧情，空间与光色不要突变。"
-        if sid
-        else "与前后镜剧情连续，空间与光色不要突变。"
-    )
+            base = c
+        else:
+            base = ""
+    else:
+        base = ""
+    if not base:
+        base = (
+            f"本镜为全片第{sid}镜，与前后镜同一场连续戏：同一空间陈设、同一光色、"
+            f"同一人物左右站位轴；只推进表演，禁止换景、禁止站位左右对调、禁止重摆。"
+            if sid
+            else "与前后镜同一场连续戏：空间/光色/站位轴不变，禁止换景重摆。"
+        )
+    face = _dialogue_facing_hint(shot)
+    if face and face not in base:
+        return f"{base} {face}"
+    return base
 
 
 def compact_shot_record(shot: dict[str, Any]) -> dict[str, Any]:
@@ -235,6 +270,9 @@ def _fmt_voice_entry(v: dict[str, Any]) -> str:
             bits.append(f"情绪:{emo}")
         if vd:
             bits.append(vd[:80])
+        av = (v.get("asset_visual") or "").strip()
+        if av:
+            bits.append(f"外形:{av[:60]}")
         tone = "（" + "；".join(bits) + "）"
     if not text:
         if note:
@@ -242,6 +280,62 @@ def _fmt_voice_entry(v: dict[str, Any]) -> str:
         return ""
     line = _fmt_voice(role, text, v.get("start_sec"))
     return f"{line}{tone}" if tone else line
+
+
+def _h3_native_audio_directive(voices: list, ambience: str) -> str:
+    """官方 H3 成片音轨指令：模型直接出旁白/对白 + 环境声（不用 Web TTS 盖轨）。"""
+    lines: List[str] = [
+        "【H3音轨】Must output a clear stereo soundtrack with intelligible Mandarin Chinese speech "
+        "and natural environmental sounds matching the picture.",
+        "CRITICAL: Forbidden audio artifacts — electrical buzz/hum, AC mains whine, synthetic drone, "
+        "static hiss-only beds, modem-like tones. If unsure, prefer quiet natural wood-room tone + speech.",
+        "【禁止】电流声、嗡鸣、合成低频、只有沙沙底噪；对白必须是清晰可辨的普通话人声，音量明显高于环境声。",
+        "No on-screen subtitles. Speech lives only on the audio track.",
+    ]
+    any_speech = False
+    for v in _dedupe_voices(voices if isinstance(voices, list) else []):
+        if not isinstance(v, dict):
+            continue
+        text = (v.get("text") or "").strip()
+        if not text:
+            continue
+        any_speech = True
+        role = (v.get("role") or "旁白").strip()
+        try:
+            st = float(v.get("start_sec") if v.get("start_sec") is not None else 0.6)
+        except (TypeError, ValueError):
+            st = 0.6
+        gender_hint = ""
+        low = role
+        if any(k in low for k in ("承嗣", "道成", "公子", "少爷", "侯爷", "玄策", "男")):
+            gender_hint = " (young adult MALE hard voice, not female)"
+        elif any(k in low for k in ("九亭", "明珠", "姑娘", "小姐", "夫人", "女")):
+            gender_hint = " (young adult FEMALE voice, not male)"
+        if _is_narrator_role(role):
+            lines.append(
+                f'Off-screen Mandarin voiceover MUST be clearly audible starting near {st:.1f}s: "{text}" '
+                "while all on-screen characters keep lips completely closed."
+            )
+        else:
+            lines.append(
+                f'{role}{gender_hint} MUST speak audible Mandarin on-screen starting near {st:.1f}s: "{text}" '
+                "with natural lip sync; other characters stay silent with closed lips. "
+                "Voice gender must match the speaking character."
+            )
+    if any_speech:
+        lines.append(
+            "Dialogue is mandatory on the soundtrack for this shot; do not replace speech with ambience or hum."
+        )
+    else:
+        lines.append("No dialogue this shot: keep lips closed; soft natural ambience only (no electrical hum).")
+    amb = (ambience or "").strip()
+    if not amb:
+        amb = "quiet wooden interior, soft distant wind, light room tone"
+    lines.append(
+        f"Ambient bed: {amb}. Keep ambience under speech; continuous natural room tone; "
+        "absolutely no electrical hum or synthetic drone."
+    )
+    return "\n".join(lines)
 
 
 def is_black_shot_visual(visual: str) -> bool:
@@ -263,11 +357,14 @@ CINEMA_STYLE_BLOCK = (
 FREEDIDI_SHOT_RULES = (
     "【分镜规则】每镜仅对应本镜输入首帧，单镜全屏连续拍摄；"
     "不是多格同时发生；镜间剧情按镜号顺序推进，动作自然衔接，不要硬切贴纸感。"
+    "【同场锁定】同一场景的连续镜必须共用同一空间母版与人物站位轴（左右关系固定）；"
+    "对白时说话人朝向听话人，禁止正对镜头念白；段与段之间位置/朝向/陈设硬承接。"
 )
 
 NO_ONSCREEN_TEXT = (
-    "【画面纯净】严禁任何 on-screen 文字：无字幕、无汉字、无字母、无标题、无水印、无 Logo、无 UI；"
-    "台词只存在于音轨，画面中绝不对白上屏、不出现横幅字幕或特效字。"
+    "【画面纯净】严禁任何 on-screen 文字：无字幕、无汉字、无字母、无数字标题、无水印、无 Logo、无 UI、"
+    "无弹幕、无台词条、无说明文字、无烧录字幕、无书法牌匾可读字；"
+    "台词只存在于音轨，画面中绝不对白上屏；clean cinematic frame, no subtitles, no captions。"
 )
 
 
@@ -366,6 +463,7 @@ def shot_to_block(
             if isinstance(v, dict)
         ):
             lip_line = f"\n【口型硬性】{_narrator_only_lip_hint()}"
+        audio_dir = _h3_native_audio_directive(voices, amb)
         body = (
             f"镜头{sid}：\n"
             f"【参考首帧】严格以本镜输入分镜图（shot_{sid:02d}.png）为唯一构图与人物基准；"
@@ -375,6 +473,7 @@ def shot_to_block(
             f"【人物表演】{performance}\n"
             f"【剧情衔接】{continuity}"
             f"{env_line}{lip_line}\n"
+            f"{audio_dir}\n"
             f"【硬性要求】{fusion}；地平线水平 upright；禁止旋转、甩镜、扭曲、万花筒。"
         )
         lines = [header, f"视频提示词：\n{body}"]
@@ -545,18 +644,53 @@ LINGCHUAN_STILL_LOCK = (
 
 
 def enrich_still_prompt(visual: str, still: str, *, character_bible: str = "") -> str:
-    """空镜去掉「误画主角」；有凌川时锁脸锁服装。"""
-    from .generation_prefs import ESTABLISHING_STILL_HINT, _is_establishing_shot
+    """空镜去掉「误画主角」；有凌川时锁脸锁服装；竖屏/双人/手机屏纠偏。"""
+    from .generation_prefs import (
+        ESTABLISHING_STILL_HINT,
+        ESTABLISHING_STILL_PREFIX,
+        PHONE_SCREEN_HINT,
+        TWO_SHOT_HEADROOM_HINT,
+        VERTICAL_HINT,
+        _is_establishing_shot,
+        _is_vertical_visual,
+        _needs_phone_screen_hint,
+        _needs_two_shot_headroom,
+    )
 
     vis = (visual or "").strip()
     out = (still or "").strip()
-    from .generation_prefs import ESTABLISHING_STILL_PREFIX
+    out = re.sub(r"面对镜头(?:自然)?说话", "朝向对话对象说话", out)
+    vis = re.sub(r"面对镜头(?:自然)?说话", "朝向对话对象说话", vis)
 
     if _is_establishing_shot(vis) or _is_establishing_shot(out):
         out = (
             f"{ESTABLISHING_STILL_PREFIX}；纯环境空镜，不要王子主角单人肖像；"
             f"{ESTABLISHING_STILL_HINT}，{out}"
         )
+    combo = f"{vis}\n{out}"
+    # Drama10 视频块常带「横屏16比9」，竖屏分镜静帧必须去掉，否则人物易被裁/朝向乱
+    if _is_vertical_visual(combo):
+        for bad, good in (
+            ("横屏16比9构图", "竖屏9比16构图"),
+            ("横屏16比9", "竖屏9比16"),
+            ("横屏 16:9", "竖屏 9:16"),
+            ("16:9 composition", "9:16 vertical composition"),
+        ):
+            out = out.replace(bad, good)
+    prefix_bits: list[str] = []
+    if _is_vertical_visual(combo) and VERTICAL_HINT not in out:
+        prefix_bits.append(VERTICAL_HINT)
+    if _needs_two_shot_headroom(combo) and TWO_SHOT_HEADROOM_HINT not in out:
+        prefix_bits.append(TWO_SHOT_HEADROOM_HINT)
+    if _needs_phone_screen_hint(combo) and PHONE_SCREEN_HINT not in out:
+        prefix_bits.append(PHONE_SCREEN_HINT)
+    # 对话戏静帧：锁朝向与同场空间，减少分段后换景/站位乱跳
+    if re.search(r"(对白|说话|台词|朝向|对谈)", combo) and "禁止正对镜头" not in out:
+        prefix_bits.append(
+            "同场连续剧照：人物朝向对话对象而非镜头，左右站位与场景陈设稳定可衔接下一镜"
+        )
+    if prefix_bits:
+        out = "；".join(prefix_bits) + "。" + out
     if "凌川" in vis or "Ling Chuan" in vis or "Lingchuan" in vis.lower():
         lock = LINGCHUAN_STILL_LOCK
         if (character_bible or "").strip():

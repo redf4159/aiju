@@ -1,6 +1,11 @@
-# 冰镜 · AI短剧生产包
+# 冰镜 · AI短剧 / 漫剧工作台
 
-改编自小说《幻城》，20集 × 约1分钟/集，总时长约20分钟。
+仓库：[https://github.com/redf4159/aiju](https://github.com/redf4159/aiju)
+
+改编自小说《幻城》，20集 × 约1分钟/集，总时长约20分钟。  
+**Web 漫剧制作台**源码在 `web/`，部署说明见 [`deploy/INSTALL.md`](deploy/INSTALL.md)。
+
+当前预览：https://dj.preview.3swl.com/
 
 ## 与根目录《生产流程.txt》的对应关系
 

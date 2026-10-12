@@ -76,6 +76,10 @@ def _keywords(desc: str) -> List[str]:
     d = (desc or "").strip().lower()
     tags: List[str] = []
     rules: List[Tuple[str, Tuple[str, ...]]] = [
+        ("office", (
+            "office", "办公室", "写字楼", "工位", "键盘", "hvac", "room tone",
+            "open office", "办公", "空调",
+        )),
         ("blizzard", ("暴风", "风雪", "暴雪", "雪", "snow", "snowstorm", "blizzard", "winter wind")),
         ("hall", (
             "大殿", "大厅", "殿", "混响", "空腔", "palace", "corridor", "hall",
@@ -88,6 +92,48 @@ def _keywords(desc: str) -> List[str]:
         if any(k.lower() in d for k in keys):
             tags.append(tag)
     return tags or ["generic"]
+
+
+def _office_room_tone(n: int, seed: int) -> Tuple[np.ndarray, np.ndarray]:
+    """办公室：宽带轻柔 room tone + 偶发轻键盘，避免连续 hum/电流感。"""
+    rng = _rng(seed + 7)
+    # 粉噪近似，再限制在中高频，避开 50/60Hz 电源带
+    white = rng.randn(n).astype(np.float64)
+    pink = np.zeros(n, dtype=np.float64)
+    b0 = b1 = b2 = 0.0
+    for i, w in enumerate(white):
+        b0 = 0.99886 * b0 + w * 0.0555179
+        b1 = 0.99332 * b1 + w * 0.0750759
+        b2 = 0.96900 * b2 + w * 0.1538520
+        pink[i] = b0 + b1 + b2 + w * 0.0321840
+    # 简单一阶高通 ~180Hz（去掉电源嗡）+ 低通 ~6k
+    hp = np.zeros(n, dtype=np.float64)
+    rc_hp = 1.0 / (2 * np.pi * 180.0)
+    dt = 1.0 / SR
+    a_hp = rc_hp / (rc_hp + dt)
+    prev = 0.0
+    xprev = 0.0
+    for i in range(n):
+        x = pink[i]
+        prev = a_hp * (prev + x - xprev)
+        xprev = x
+        hp[i] = prev
+    lp = np.zeros(n, dtype=np.float64)
+    alpha = 0.08
+    for i in range(1, n):
+        lp[i] = lp[i - 1] + alpha * (hp[i] - lp[i - 1])
+    bed = (lp * 0.22).astype(np.float32)
+    # 偶发轻敲键盘（瞬态，不像电流）
+    clicks = np.zeros(n, dtype=np.float64)
+    pos = int(0.8 * SR)
+    while pos < n - int(0.05 * SR):
+        wlen = int(rng.uniform(0.012, 0.035) * SR)
+        env = np.hanning(min(wlen, n - pos))
+        clicks[pos : pos + len(env)] += rng.randn(len(env)) * env * 0.08
+        pos += int(rng.uniform(0.7, 1.8) * SR)
+    L = bed + clicks.astype(np.float32) * 0.9
+    R = bed * 1.03 + np.roll(clicks.astype(np.float32), 40) * 0.85
+    return L.astype(np.float32), R.astype(np.float32)
 
 
 def _write_stereo_wav(path: Path, left: np.ndarray, right: np.ndarray) -> None:
@@ -150,12 +196,16 @@ def write_enhanced_ambience_wav(
     L = np.zeros(n, dtype=np.float32)
     R = np.zeros(n, dtype=np.float32)
 
+    if "office" in tags:
+        oL, oR = _office_room_tone(n, seed)
+        L += oL
+        R += oR
     if "hall" in tags:
         h = _murmur_layer(n, seed) * 1.1
         cr = _candle_crackle(n, seed)
         L += h + cr * 0.9
         R += h * 1.05 + cr
-    if "blizzard" in tags or "generic" in tags:
+    if "blizzard" in tags or ("generic" in tags and "office" not in tags):
         g1 = _gust_wind(n, seed, 0.55)
         g2 = _gust_wind(n, seed + 9, 0.5)
         L += g1
@@ -175,7 +225,7 @@ def write_enhanced_ambience_wav(
         R += g
 
     cache_key = hashlib.md5(
-        f"{description}|{duration_sec:.2f}|{seed}|natural_v6".encode("utf-8")
+        f"{description}|{duration_sec:.2f}|{seed}|natural_v7_office".encode("utf-8")
     ).hexdigest()[:16]
     SFX_CACHE.mkdir(parents=True, exist_ok=True)
     base = SFX_CACHE / f"amb_{cache_key}.wav"

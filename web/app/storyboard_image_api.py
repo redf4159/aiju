@@ -45,31 +45,108 @@ def _snap_dim(n: int) -> int:
     return max(16, (n // 16) * 16)
 
 
+def _env_size(name: str) -> Optional[str]:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw or "x" not in raw.lower():
+        return None
+    a, _, b = raw.lower().partition("x")
+    try:
+        return f"{_snap_dim(int(a.strip()))}x{_snap_dim(int(b.strip()))}"
+    except ValueError:
+        return None
+
+
+def _scale_canvas_to_api_budget(width: int, height: int) -> Tuple[int, int]:
+    """按项目宽高比缩放，直到满足上游常见像素/短边下限（避免 400 invalid size）。"""
+    w = _snap_dim(max(64, int(width)))
+    h = _snap_dim(max(64, int(height)))
+    # 默认 0：上游优先用项目原尺寸；若 API 拒尺寸再走 fallback 同比例放大
+    try:
+        min_pixels = int((os.environ.get("STORYBOARD_IMAGE_MIN_PIXELS") or "0").strip())
+    except ValueError:
+        min_pixels = 0
+    try:
+        min_short = int((os.environ.get("STORYBOARD_IMAGE_MIN_SHORT") or "0").strip())
+    except ValueError:
+        min_short = 0
+    scale = 1.0
+    if min_pixels > 0 and w * h < min_pixels:
+        scale = max(scale, (min_pixels / float(w * h)) ** 0.5)
+    if min_short > 0 and min(w, h) < min_short:
+        scale = max(scale, min_short / float(min(w, h)))
+    if scale <= 1.001:
+        return w, h
+    aspect = w / float(h)
+    if h >= w:
+        nh = _snap_dim(int(round(h * scale)))
+        nw = _snap_dim(max(16, int(round(nh * aspect))))
+    else:
+        nw = _snap_dim(int(round(w * scale)))
+        nh = _snap_dim(max(16, int(round(nw / aspect))))
+    return max(64, nw), max(64, nh)
+
+
+def _size_matches_orientation(size: str, width: int, height: int) -> bool:
+    """环境变量覆盖不得把竖屏项目改成横屏 size（反之亦然）。"""
+    try:
+        a, _, b = size.lower().partition("x")
+        sw, sh = int(a), int(b)
+    except ValueError:
+        return False
+    want_portrait = int(height) > int(width)
+    got_portrait = sh > sw
+    return want_portrait == got_portrait
+
+
 def _portrait_api_size(width: int, height: int) -> str:
-    custom = (os.environ.get("STORYBOARD_IMAGE_SIZE") or "").strip()
-    if custom and "x" in custom.lower():
-        a, _, b = custom.lower().partition("x")
-        try:
-            return f"{_snap_dim(int(a.strip()))}x{_snap_dim(int(b.strip()))}"
-        except ValueError:
-            pass
-    if height > width:
-        raw = os.environ.get("STORYBOARD_IMAGE_SIZE_PORTRAIT", "1024x1536")
-        if "x" in raw.lower():
-            a, _, b = raw.lower().partition("x")
-            try:
-                return f"{_snap_dim(int(a))}x{_snap_dim(int(b))}"
-            except ValueError:
-                return raw
-        return raw
-    default = os.environ.get("STORYBOARD_IMAGE_SIZE_LANDSCAPE", "1536x864")
-    if "x" in default.lower():
-        a, _, b = default.lower().partition("x")
-        try:
-            return f"{_snap_dim(int(a))}x{_snap_dim(int(b))}"
-        except ValueError:
-            pass
-    return f"{_snap_dim(width)}x{_snap_dim(height)}"
+    """上游 size：默认与项目分镜画布同比例；环境变量仅在同方向时允许覆盖。"""
+    custom = _env_size("STORYBOARD_IMAGE_SIZE")
+    if custom and _size_matches_orientation(custom, width, height):
+        return custom
+    # 横屏 env（如历史 1536x864）不得覆盖竖屏项目
+    w, h = _scale_canvas_to_api_budget(width, height)
+    return f"{w}x{h}"
+
+
+def _api_size_fallbacks(width: int, height: int) -> list[str]:
+    """同宽高比优先；最后才落到历史固定档，减少裁切。"""
+    primary = _portrait_api_size(width, height)
+    exact = f"{_snap_dim(width)}x{_snap_dim(height)}"
+    out: list[str] = []
+    for s in (primary, exact):
+        if s and s not in out and _size_matches_orientation(s, width, height):
+            out.append(s)
+    # 同比例放大到短边约 1024
+    tw, th = _snap_dim(width), _snap_dim(height)
+    if min(tw, th) > 0:
+        scale = 1024 / float(min(tw, th))
+        if scale > 1.01:
+            if th >= tw:
+                nh = _snap_dim(int(round(th * scale)))
+                nw = _snap_dim(int(round(nh * (tw / float(th)))))
+            else:
+                nw = _snap_dim(int(round(tw * scale)))
+                nh = _snap_dim(int(round(nw * (th / float(tw)))))
+            same = f"{nw}x{nh}"
+            if same not in out:
+                out.append(same)
+    if th >= tw:
+        for s in (
+            _env_size("STORYBOARD_IMAGE_SIZE_PORTRAIT"),
+            "1024x1792",
+            "1024x1536",
+        ):
+            if s and s not in out:
+                out.append(s)
+    else:
+        for s in (
+            _env_size("STORYBOARD_IMAGE_SIZE_LANDSCAPE"),
+            "1792x1024",
+            "1536x864",
+        ):
+            if s and s not in out:
+                out.append(s)
+    return out
 
 
 def _merge_prompt(prompt: str, negative: str) -> str:
@@ -82,6 +159,16 @@ def _merge_prompt(prompt: str, negative: str) -> str:
     return f"{p}\n\nAvoid: {n}"
 
 
+def _default_image_timeout() -> float:
+    raw = (os.environ.get("STORYBOARD_IMAGE_TIMEOUT") or "").strip()
+    if raw:
+        try:
+            return max(60.0, float(raw))
+        except ValueError:
+            pass
+    return 480.0
+
+
 def generate_still_to_file(
     prompt: str,
     negative: str,
@@ -90,7 +177,7 @@ def generate_still_to_file(
     dest: Path,
     *,
     model: Optional[str] = None,
-    timeout: float = 300.0,
+    timeout: Optional[float] = None,
 ) -> Path:
     """调用 OhMyGPT 等 OpenAI 兼容文生图，写入 dest（PNG）。"""
     base, key = _resolve_api_credentials()
@@ -99,46 +186,73 @@ def generate_still_to_file(
             "未配置 OhMyGPT：请在制作台「全局制作 → OhMyGPT 密钥」保存 API Key"
         )
     model = model or image_api_model()
+    timeout = _default_image_timeout() if timeout is None else float(timeout)
     url = f"{base}/images/generations"
     if not url.startswith("http"):
         url = f"https://{url.lstrip('/')}"
-    body = {
-        "model": model,
-        "prompt": _merge_prompt(prompt, negative)[:4000],
-        "n": 1,
-        "size": _portrait_api_size(width, height),
-    }
+    size_fallbacks = _api_size_fallbacks(width, height)
+    if not size_fallbacks:
+        size_fallbacks = [f"{_snap_dim(width)}x{_snap_dim(height)}"]
+    # 硬校验：竖屏项目绝不能拿横屏 size 去打上游（历史 systemd 曾写死 1536x864）
+    size_fallbacks = [
+        s for s in size_fallbacks if _size_matches_orientation(s, width, height)
+    ] or [f"{_snap_dim(width)}x{_snap_dim(height)}"]
+    size = size_fallbacks[0]
     fmt = (os.environ.get("STORYBOARD_IMAGE_RESPONSE") or "b64_json").strip()
-    if fmt:
-        body["response_format"] = fmt
 
     headers = {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
     }
     proxy = (os.environ.get("STORYBOARD_IMAGE_HTTPS_PROXY") or os.environ.get("HTTPS_PROXY") or "").strip()
-    client_kw: dict = {"timeout": httpx.Timeout(timeout, connect=min(120.0, timeout))}
+    client_kw: dict = {"timeout": httpx.Timeout(timeout, connect=min(60.0, timeout))}
     if proxy:
         client_kw["proxy"] = proxy
     last_err: Optional[Exception] = None
     data = None
-    for attempt in range(3):
-        try:
-            with httpx.Client(**client_kw) as client:
-                resp = client.post(url, json=body, headers=headers)
-                if resp.status_code >= 400:
+    attempts = 3
+    used_size = size
+    for size_try in size_fallbacks:
+        used_size = size_try
+        body = {
+            "model": model,
+            "prompt": _merge_prompt(prompt, negative)[:4000],
+            "n": 1,
+            "size": size_try,
+        }
+        if fmt:
+            body["response_format"] = fmt
+        for attempt in range(attempts):
+            try:
+                with httpx.Client(**client_kw) as client:
+                    resp = client.post(url, json=body, headers=headers)
+                    if resp.status_code >= 400:
+                        # 尺寸不被支持时换下一档，不空耗重试
+                        if resp.status_code == 400 and "size" in (resp.text or "").lower():
+                            last_err = RuntimeError(
+                                f"出图 API HTTP {resp.status_code}: {resp.text[:500]}"
+                            )
+                            break
+                        raise RuntimeError(
+                            f"出图 API HTTP {resp.status_code}: {resp.text[:500]}"
+                        )
+                    data = resp.json()
+                break
+            except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as exc:
+                last_err = exc
+                if attempt >= attempts - 1:
                     raise RuntimeError(
-                        f"出图 API HTTP {resp.status_code}: {resp.text[:500]}"
-                    )
-                data = resp.json()
+                        f"出图 API 超时/断连（model={model}, size={size_try}, "
+                        f"单次等待{int(timeout)}秒×{attempts}次）。上游未返回图片：{exc}"
+                    ) from exc
+                time.sleep(2.0 * (attempt + 1))
+        if data is not None:
             break
-        except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as exc:
-            last_err = exc
-            if attempt >= 2:
-                raise
-            time.sleep(2.0 * (attempt + 1))
+    size = used_size
     if data is None and last_err:
-        raise last_err
+        raise RuntimeError(
+            f"出图 API 失败（model={model}, size={size}）：{last_err}"
+        ) from last_err
 
     b64, img_url = _extract_image_payload(data)
     dest.parent.mkdir(parents=True, exist_ok=True)

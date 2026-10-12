@@ -48,16 +48,26 @@ VIDEO_SCENE_INTEGRATION = (
     "同一实拍摄影机连续拍摄：单一曝光与白平衡、统一胶片颗粒与大气透视；"
     "人物完全处在场景三维空间内，脚下接地阴影、环境反射与背景色温一致，"
     "景深光学连续，边缘无硬切无描边光晕；"
+    "同场连续镜保持同一空间母版与人物左右站位轴，对白时朝向对方而非镜头；"
     "严禁抠像、严禁绿幕合成感、严禁人物前景层贴背景、严禁两层分离合成或贴纸感"
 )
 
 PORTRAIT_HINT = "横屏16比9构图，主体 upright，地平线水平，禁止旋转90度"
+VERTICAL_HINT = (
+    "竖屏9比16全屏构图，画面本身为竖幅不是横幅加黑边，主体 upright，"
+    "头顶与下巴留白，禁止横屏宽荧幕、禁止上下黑边 letterbox、禁止镜像翻转、禁止旋转90度"
+)
 LANDSCAPE_HINT = "横屏16比9环境构图，地平线水平，禁止旋转90度，空镜无人物"
+TWO_SHOT_HEADROOM_HINT = (
+    "双人同框须两人头部完整入画、五官清晰、头顶留白，禁止裁切头顶或半身无头"
+)
+PHONE_SCREEN_HINT = (
+    "手机屏幕正向朝向观众、界面与通知文字方向正确可读，"
+    "禁止镜像、禁止左右颠倒、禁止屏幕倒置"
+)
 
 
 def default_prefs() -> Dict[str, Any]:
-    from .voice_cast import DEFAULT_VOICE_CAST
-
     return {
         "look": "live_action",
         "storyboard_backend": "image_api",
@@ -65,8 +75,53 @@ def default_prefs() -> Dict[str, Any]:
         "extra_prefix": "",
         "negative_prompt": DEFAULT_NEGATIVE,
         "global_memory": "",
-        "voice_cast": list(DEFAULT_VOICE_CAST),
+        # 新建项目默认空卡司，避免把《冰镜》凌川等串进其它短剧
+        "voice_cast": [],
+        # 0 = 回退到项目 width/height；可分别指定分镜图与成片分辨率
+        "still_width": 0,
+        "still_height": 0,
+        "video_width": 0,
+        "video_height": 0,
     }
+
+
+def _snap_dim(n: int, default: int, multiple: int = 32) -> int:
+    try:
+        v = int(n)
+    except (TypeError, ValueError):
+        v = default
+    if v < 64:
+        return default
+    m = max(8, int(multiple))
+    return max(64, (v // m) * m)
+
+
+def resolve_still_canvas(
+    proj: Dict[str, Any], prefs: Optional[Dict[str, Any]] = None
+) -> Tuple[int, int]:
+    """分镜静帧落盘尺寸（可与成片不同；按 16 对齐，保留 720x1280）。"""
+    prefs = prefs or {}
+    pw = _snap_dim(proj.get("width"), 640, 16)
+    ph = _snap_dim(proj.get("height"), 360, 16)
+    sw = _snap_dim(prefs.get("still_width"), 0, 16)
+    sh = _snap_dim(prefs.get("still_height"), 0, 16)
+    if sw >= 64 and sh >= 64:
+        return sw, sh
+    return pw, ph
+
+
+def resolve_video_source_canvas(
+    proj: Dict[str, Any], prefs: Optional[Dict[str, Any]] = None
+) -> Tuple[int, int]:
+    """成片/图生视频的逻辑画布（再经 adapt_canvas_for_video 对齐 H3）。"""
+    prefs = prefs or {}
+    pw = _snap_dim(proj.get("width"), 640, 32)
+    ph = _snap_dim(proj.get("height"), 360, 32)
+    vw = _snap_dim(prefs.get("video_width"), 0, 32)
+    vh = _snap_dim(prefs.get("video_height"), 0, 32)
+    if vw >= 64 and vh >= 64:
+        return vw, vh
+    return pw, ph
 
 
 def parse_prefs(raw: Any) -> Dict[str, Any]:
@@ -97,6 +152,11 @@ def validate_still_not_near_black(path: Path) -> None:
 
 
 def _is_black_shot(visual: str) -> bool:
+    """是否整镜为黑场（应跳过图生视频）。
+
+    仅当画面描述几乎只剩黑场/切黑时才判定；正文很长却带「硬切黑场」片尾转场的，
+    仍按正常镜头生成（否则会漏生成整段剧情）。
+    """
     v = (visual or "").strip()
     if not v:
         return False
@@ -105,7 +165,26 @@ def _is_black_shot(visual: str) -> bool:
         for x in ("无切黑", "不切黑", "无黑场", "不要黑场", "非黑场", "无纯黑")
     ):
         return False
-    return any(x in v for x in ("纯黑", "黑场", "切黑", "全黑画面", "fade to black"))
+    markers = ("纯黑", "黑场", "切黑", "全黑画面", "fade to black")
+    if not any(x in v for x in markers):
+        return False
+    cleaned = v
+    for x in (
+        "硬切黑场",
+        "切黑场",
+        "淡出黑场",
+        "fade to black",
+        "纯黑",
+        "黑场",
+        "切黑",
+        "全黑画面",
+    ):
+        cleaned = cleaned.replace(x, "")
+    cleaned = cleaned.strip(" \t\r\n；;。.|，,")
+    # 去掉转场词后仍有明显画面/对白描述 → 不是整镜黑场
+    if len(cleaned) >= 24:
+        return False
+    return True
 
 
 def _is_establishing_shot(visual: str) -> bool:
@@ -181,6 +260,9 @@ def effective_style(style_prefix: str, prefs: Dict[str, Any]) -> Tuple[str, str]
 
 
 _CLOSEUP_KW = ("特写", "大特写", "面部", "眼神", "侧脸", "face", "close-up", "close up", "extreme close")
+_VERTICAL_KW = ("竖屏", "9比16", "9:16", "9/16", "portrait 9:16", "vertical 9:16")
+_TWO_SHOT_KW = ("两人同框", "双人", "同框", "two-shot", "two shot", "对侧")
+_PHONE_KW = ("手机", "smartphone", "手机屏幕", "通知")
 
 
 def _needs_face_hint(visual: str) -> bool:
@@ -188,16 +270,46 @@ def _needs_face_hint(visual: str) -> bool:
     return any(k in v for k in _CLOSEUP_KW)
 
 
+def _is_vertical_visual(visual: str) -> bool:
+    v = (visual or "").lower()
+    return any(k.lower() in v for k in _VERTICAL_KW)
+
+
+def _needs_two_shot_headroom(visual: str) -> bool:
+    v = (visual or "").lower()
+    return any(k.lower() in v for k in _TWO_SHOT_KW)
+
+
+def _needs_phone_screen_hint(visual: str) -> bool:
+    v = (visual or "").lower()
+    return any(k.lower() in v for k in _PHONE_KW)
+
+
 def apply_negative_to_visual(
     visual: str, negative: str, *, establishing: Optional[bool] = None
 ) -> str:
     v = (visual or "").strip()
     est = _is_establishing_shot(v) if establishing is None else establishing
-    hint = LANDSCAPE_HINT if est else PORTRAIT_HINT
+    vertical = _is_vertical_visual(v)
+    if est:
+        hint = LANDSCAPE_HINT if not vertical else (
+            "竖屏9比16环境构图，地平线水平，禁止镜像翻转，禁止旋转90度，空镜无人物"
+        )
+    else:
+        hint = VERTICAL_HINT if vertical else PORTRAIT_HINT
     if not v:
         return f"{hint}。{negative}"
-    if hint not in v and PORTRAIT_HINT not in v and LANDSCAPE_HINT not in v:
+    if (
+        hint not in v
+        and PORTRAIT_HINT not in v
+        and VERTICAL_HINT not in v
+        and LANDSCAPE_HINT not in v
+    ):
         v = f"{hint}，{v}"
+    if not est and _needs_two_shot_headroom(v) and TWO_SHOT_HEADROOM_HINT not in v:
+        v = f"{TWO_SHOT_HEADROOM_HINT}，{v}"
+    if not est and _needs_phone_screen_hint(v) and PHONE_SCREEN_HINT not in v:
+        v = f"{PHONE_SCREEN_HINT}，{v}"
     if not est and _is_crowd_wide_shot(v):
         if CROWD_WIDE_HINT not in v:
             v = f"{CROWD_WIDE_HINT}，{v}"
@@ -210,4 +322,6 @@ def apply_negative_to_visual(
         neg = f"{negative}，{ESTABLISHING_NEGATIVE}"
     else:
         neg = negative
+        if vertical:
+            neg = f"{neg}，镜像翻转, mirrored image, upside-down phone, cropped head, head cut off"
     return f"{v}。避免：{neg}"

@@ -2,8 +2,9 @@
 """全剧/分集脚本：OhMyGPT OpenAI 兼容 /v1/chat/completions。
 
 推荐模型（中文长剧本 + 结构化 JSON）：
-- deepseek-chat（DeepSeek V3，性价比与中文叙事优先）
-- gpt-4o（字段完整度与 JSON 稳定性更好）
+- gpt-6-astra（OpenAI 最新旗舰，默认）
+- gpt-6.1-sol（近旗舰、更省）
+- deepseek-chat（DeepSeek V3，中文性价比）
 """
 from __future__ import annotations
 
@@ -20,12 +21,15 @@ from .drama10_export import DATA_DIR
 from .studio_settings import DEFAULT_OHMYGPT_API_BASE, ohmygpt_api_base, ohmygpt_api_key
 from .voice_cast import DEFAULT_VOICE_CAST, enrich_episode_shots, merge_voice_cast, normalize_cast
 
-DEFAULT_SCRIPT_MODEL = os.environ.get("OHMYGPT_SCRIPT_MODEL", "deepseek-chat")
+DEFAULT_SCRIPT_MODEL = os.environ.get("OHMYGPT_SCRIPT_MODEL", "gpt-6-astra")
 
 RECOMMENDED_SCRIPT_MODELS: List[Dict[str, str]] = [
-    {"id": "deepseek-chat", "label": "DeepSeek V3（中文剧本，推荐）"},
-    {"id": "gpt-4o", "label": "GPT-4o（JSON 结构更稳）"},
-    {"id": "gpt-4o-mini", "label": "GPT-4o mini（省 token）"},
+    {"id": "gpt-6-astra", "label": "GPT-6 Astra（最新旗舰，推荐）"},
+    {"id": "gpt-6.1-sol", "label": "GPT-6.1 Sol（近旗舰、更省）"},
+    {"id": "gpt-6-luna", "label": "GPT-6 Luna（高吞吐）"},
+    {"id": "deepseek-chat", "label": "DeepSeek V3（中文性价比）"},
+    {"id": "gpt-4o", "label": "GPT-4o（旧）"},
+    {"id": "gpt-4o-mini", "label": "GPT-4o mini（旧·省 token）"},
 ]
 
 SERIES_RULES = """
@@ -62,6 +66,11 @@ def _credentials() -> Tuple[str, str]:
     return base, key
 
 
+def _is_gpt5_plus(model: str) -> bool:
+    m = (model or "").lower()
+    return bool(re.match(r"^gpt-([5-9]|\d{2,})", m) or m.startswith("o3") or m.startswith("o4"))
+
+
 def chat_completion(
     messages: List[Dict[str, str]],
     *,
@@ -78,9 +87,13 @@ def chat_completion(
     payload: Dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
     }
+    # GPT-5/6 系常用 max_completion_tokens；部分推理模型不接受自定义 temperature
+    if _is_gpt5_plus(model):
+        payload["max_completion_tokens"] = max_tokens
+    else:
+        payload["temperature"] = temperature
+        payload["max_tokens"] = max_tokens
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
     last_err: Optional[Exception] = None
     for attempt in range(3):

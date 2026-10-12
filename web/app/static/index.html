@@ -3,23 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>短剧制作台</title>
-  <link rel="stylesheet" href="/static/style.css?v=0.5.49" />
+  <title>三硕画布</title>
+  <link rel="stylesheet" href="/static/style.css?v=1.1.8" />
 </head>
 <body>
-  <div class="layout">
-    <aside class="sidebar">
-      <div class="brand">短剧制作台</div>
-      <button type="button" id="btnNewProject" class="btn block primary">+ 新建短剧</button>
-      <nav id="projectNav" class="project-nav"></nav>
-      <div id="sidebarJob" class="sidebar-job hidden"></div>
-      <p class="sidebar-foot muted" id="configLine"></p>
-    </aside>
-    <main class="main" id="mainView">
-      <p class="muted">加载中…</p>
-    </main>
+  <div id="app" class="app-root">
+    <p class="boot-msg">加载中…</p>
   </div>
   <div id="modal" class="modal hidden"></div>
-  <script src="/static/app.js?v=0.5.50"></script>
+  <div id="videoViewer" class="modal hidden"></div>
+  <script src="/static/studio.js?v=1.2.6"></script>
 </body>
 </html>

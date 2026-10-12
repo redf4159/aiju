@@ -2,12 +2,16 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 import os
 import secrets
+import time
 import uuid
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
+from urllib.parse import quote, unquote, urlencode
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, Response
@@ -23,6 +27,11 @@ from .pipeline_stages import EPISODE_STAGES, PROJECT_STAGES
 
 WEB_USER = os.environ.get("WEB_USER", "sansuo")
 WEB_PASSWORD = os.environ.get("WEB_PASSWORD", "sansuo2026")
+# 媒体直链签名密钥（给 <video> 流式播放 / 拖拽进度用，避免 Basic Auth 丢头）
+FILE_TOKEN_SECRET = (
+    os.environ.get("BINGJING_FILE_TOKEN_SECRET") or WEB_PASSWORD or "bingjing"
+).encode("utf-8")
+MEDIA_TOKEN_TTL_SEC = int(os.environ.get("BINGJING_MEDIA_TOKEN_TTL", "7200"))
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC = APP_DIR / "static"
@@ -48,10 +57,54 @@ def _check_basic_auth(request: Request) -> bool:
     )
 
 
+def _issue_media_token(project_id: str, file_path: str, ttl_sec: int = MEDIA_TOKEN_TTL_SEC) -> str:
+    exp = int(time.time()) + max(60, int(ttl_sec))
+    msg = f"{project_id}\n{file_path}\n{exp}".encode("utf-8")
+    sig = hmac.new(FILE_TOKEN_SECRET, msg, hashlib.sha256).hexdigest()[:32]
+    raw = f"{exp}.{sig}".encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _verify_media_token(project_id: str, file_path: str, token: str) -> bool:
+    if not token or not project_id or not file_path:
+        return False
+    try:
+        pad = "=" * (-len(token) % 4)
+        raw = base64.urlsafe_b64decode((token + pad).encode("ascii")).decode("utf-8")
+        exp_s, sig = raw.split(".", 1)
+        exp = int(exp_s)
+    except Exception:
+        return False
+    if exp < int(time.time()):
+        return False
+    msg = f"{project_id}\n{file_path}\n{exp}".encode("utf-8")
+    expect = hmac.new(FILE_TOKEN_SECRET, msg, hashlib.sha256).hexdigest()[:32]
+    return secrets.compare_digest(sig, expect)
+
+
+def _parse_project_file_path(url_path: str) -> Tuple[Optional[str], Optional[str]]:
+    """从 /api/projects/{pid}/files/{rel} 解析 pid 与相对路径。"""
+    prefix = "/api/projects/"
+    marker = "/files/"
+    if not url_path.startswith(prefix) or marker not in url_path:
+        return None, None
+    rest = url_path[len(prefix) :]
+    pid, _, fpath = rest.partition(marker)
+    if not pid or not fpath:
+        return None, None
+    return unquote(pid), unquote(fpath)
+
+
 @app.middleware("http")
 async def require_login(request: Request, call_next):
     if _check_basic_auth(request):
         return await call_next(request)
+    # 允许带短期 media_token 的媒体直链（供 video 标签 Range 流式播放）
+    token = request.query_params.get("media_token") or request.query_params.get("mt")
+    if token and request.url.path.startswith("/api/projects/") and "/files/" in request.url.path:
+        pid, fpath = _parse_project_file_path(request.url.path)
+        if pid and fpath and _verify_media_token(pid, fpath, token):
+            return await call_next(request)
     return Response(
         status_code=401,
         headers={"WWW-Authenticate": 'Basic realm="bingjing"'},
@@ -131,6 +184,7 @@ def api_config():
         "storyboard_backends": services.list_storyboard_backend_options(),
         "storyboard_image_api_ready": services.storyboard_image_api_ready(),
         "ohmygpt": services.get_ohmygpt_settings(),
+        "video_backend": services.get_video_backend_settings(),
         "script_llm_models": services.list_script_llm_model_options(),
     }
 
@@ -153,6 +207,43 @@ def api_ohmygpt_settings_put(body: OhmyGPTSettingsUpdate):
         api_key=body.api_key,
         clear_key=body.clear_key,
     )
+
+
+class VideoBackendSettingsUpdate(BaseModel):
+    backend: Optional[str] = None
+    ppio_api_key: Optional[str] = None
+    ppio_endpoint_key: Optional[str] = None
+    ppio_async_base: Optional[str] = None
+    clear_ppio_key: bool = False
+    minimax_api_key: Optional[str] = None
+    minimax_api_base: Optional[str] = None
+    minimax_model: Optional[str] = None
+    minimax_resolution: Optional[str] = None
+    clear_minimax_key: bool = False
+
+
+@app.get("/api/settings/video-backend")
+def api_video_backend_settings_get():
+    return services.get_video_backend_settings()
+
+
+@app.put("/api/settings/video-backend")
+def api_video_backend_settings_put(body: VideoBackendSettingsUpdate):
+    try:
+        return services.save_video_backend_settings(
+            backend=body.backend,
+            ppio_api_key=body.ppio_api_key,
+            ppio_endpoint_key=body.ppio_endpoint_key,
+            ppio_async_base=body.ppio_async_base,
+            clear_ppio_key=body.clear_ppio_key,
+            minimax_api_key=body.minimax_api_key,
+            minimax_api_base=body.minimax_api_base,
+            minimax_model=body.minimax_model,
+            minimax_resolution=body.minimax_resolution,
+            clear_minimax_key=body.clear_minimax_key,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 class SeriesScriptsGenerateBody(BaseModel):
@@ -258,6 +349,17 @@ def api_project_patch(project_id: str, body: ProjectUpdate):
         raise HTTPException(404, "项目不存在")
 
 
+@app.delete("/api/projects/{project_id}")
+def api_project_delete(project_id: str):
+    try:
+        services.delete_project(project_id)
+        return {"ok": True, "deleted": project_id}
+    except KeyError:
+        raise HTTPException(404, "项目不存在")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @app.get("/api/projects/{project_id}/pipeline")
 def api_project_pipeline(project_id: str):
     try:
@@ -279,6 +381,7 @@ class CharacterIn(BaseModel):
     tts_voice: str = ""
     voice_samples: Optional[List[str]] = None
     ref_images: Optional[List[dict]] = None
+    episodes: Optional[List[int]] = None
     sort_order: int = 0
 
 
@@ -289,6 +392,8 @@ class SceneIn(BaseModel):
     name: str
     visual_prompt: str = ""
     ref_image: str = ""
+    ref_images: Optional[List[dict]] = None
+    episodes: Optional[List[int]] = None
     sort_order: int = 0
 
 
@@ -409,6 +514,321 @@ def api_scene_save(project_id: str, body: SceneIn):
     return services.upsert_scene(project_id, body.model_dump())
 
 
+class PropIn(BaseModel):
+    id: Optional[str] = None
+    episode_id: Optional[str] = None
+    name: str
+    role_note: str = ""
+    visual_prompt: str = ""
+    ref_image: str = ""
+    ref_images: Optional[List[dict]] = None
+    episodes: Optional[List[int]] = None
+    sort_order: int = 0
+
+
+@app.get("/api/projects/{project_id}/props")
+def api_props(project_id: str, episode_id: Optional[str] = None):
+    return {"items": services.list_props(project_id, episode_id)}
+
+
+@app.post("/api/projects/{project_id}/props")
+def api_prop_save(project_id: str, body: PropIn):
+    return services.upsert_prop(project_id, body.model_dump())
+
+
+@app.post("/api/projects/{project_id}/props/{prop_id}/images")
+async def api_prop_upload_image(
+    project_id: str,
+    prop_id: str,
+    file: UploadFile = File(...),
+    label: str = "",
+):
+    try:
+        services.get_prop(project_id, prop_id)
+    except KeyError:
+        raise HTTPException(404, "道具不存在")
+    ext = Path(file.filename or "img.png").suffix.lower() or ".png"
+    if ext not in (".png", ".jpg", ".jpeg", ".webp"):
+        ext = ".png"
+    dest_dir = db.project_dir(project_id) / "props" / prop_id / "images"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / f"ref_{uuid.uuid4().hex[:10]}{ext}"
+    dest.write_bytes(await file.read())
+    rel = str(dest.relative_to(db.project_dir(project_id))).replace("\\", "/")
+    try:
+        return services.append_prop_ref_image(
+            project_id, prop_id, rel, label=(label or "").strip() or "形象"
+        )
+    except KeyError:
+        raise HTTPException(404, "道具不存在")
+
+
+# ---------- 漫剧工作台流水线 ----------
+
+class StudioImportBody(BaseModel):
+    name: str = ""
+    novel_text: str = Field(min_length=1)
+    art_style: str = "半写实3D国漫"
+    aspect_ratio: str = "16:9"
+    mode: str = "默认版"
+    description: str = ""
+
+
+class StudioParseBody(BaseModel):
+    use_llm: bool = True
+    model: Optional[str] = None
+
+
+@app.post("/api/studio/import")
+def api_studio_import(body: StudioImportBody):
+    from . import studio_pipeline as sp
+
+    try:
+        return sp.import_novel_project(
+            name=body.name,
+            novel_text=body.novel_text,
+            art_style=body.art_style,
+            aspect_ratio=body.aspect_ratio,
+            mode=body.mode,
+            description=body.description,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/studio/import-file")
+async def api_studio_import_file(
+    file: UploadFile = File(...),
+    name: str = "",
+    art_style: str = "半写实3D国漫",
+    aspect_ratio: str = "16:9",
+    mode: str = "默认版",
+):
+    from . import studio_pipeline as sp
+
+    raw = await file.read()
+    text = ""
+    fname = (file.filename or "").lower()
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            text = raw.decode("gbk")
+        except UnicodeDecodeError:
+            text = raw.decode("utf-8", errors="ignore")
+    if fname.endswith(".docx"):
+        raise HTTPException(400, "暂请另存为 TXT 后上传（DOCX 解析待接入）")
+    if fname.endswith(".pdf"):
+        raise HTTPException(400, "暂请另存为 TXT 后上传（PDF 解析待接入）")
+    try:
+        return sp.import_novel_project(
+            name=name or Path(file.filename or "剧本").stem,
+            novel_text=text,
+            art_style=art_style,
+            aspect_ratio=aspect_ratio,
+            mode=mode,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/projects/{project_id}/studio/parse-script")
+def api_studio_parse_script(project_id: str, body: StudioParseBody = StudioParseBody()):
+    from . import studio_pipeline as sp
+
+    try:
+        return sp.parse_project_script(
+            project_id, use_llm=body.use_llm, model=body.model
+        )
+    except KeyError:
+        raise HTTPException(404, "项目不存在")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
+@app.post("/api/projects/{project_id}/studio/parse-assets")
+def api_studio_parse_assets(project_id: str, body: StudioParseBody = StudioParseBody()):
+    from . import studio_pipeline as sp
+
+    try:
+        return sp.parse_project_assets(
+            project_id, use_llm=body.use_llm, model=body.model
+        )
+    except KeyError:
+        raise HTTPException(404, "项目不存在")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
+@app.post("/api/projects/{project_id}/episodes/{episode_id}/studio/video-script")
+def api_studio_video_script(
+    project_id: str, episode_id: str, body: StudioParseBody = StudioParseBody()
+):
+    from . import studio_pipeline as sp
+
+    try:
+        return sp.generate_episode_video_script(
+            project_id, episode_id, use_llm=body.use_llm, model=body.model
+        )
+    except KeyError:
+        raise HTTPException(404, "分集不存在")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
+class BatchAssetImagesBody(BaseModel):
+    kind: str = "characters"  # characters | scenes | props
+    only_missing: bool = True
+    limit: int = Field(default=12, ge=1, le=40)
+    ids: Optional[List[str]] = None
+
+
+class BatchVideoScriptsBody(BaseModel):
+    use_llm: bool = True
+    model: Optional[str] = None
+    only_missing: bool = True
+    limit: int = Field(default=10, ge=1, le=40)
+    episode_ids: Optional[List[str]] = None
+
+
+class CompleteContentBody(BaseModel):
+    use_llm: bool = True
+    model: Optional[str] = None
+    include_assets: bool = True
+    include_outline: bool = True
+    include_video_scripts: bool = True
+    only_missing_scripts: bool = True
+    script_limit: int = Field(default=20, ge=1, le=40)
+    asset_ids: Optional[List[str]] = None
+    episode_ids: Optional[List[str]] = None
+
+
+class EnrichDescriptionsBody(BaseModel):
+    use_llm: bool = True
+    model: Optional[str] = None
+    asset_ids: Optional[List[str]] = None
+
+
+@app.post("/api/projects/{project_id}/studio/enrich-descriptions")
+def api_studio_enrich_descriptions(
+    project_id: str, body: EnrichDescriptionsBody = EnrichDescriptionsBody()
+):
+    from . import studio_pipeline as sp
+
+    try:
+        return sp.enrich_existing_asset_descriptions(
+            project_id,
+            use_llm=body.use_llm,
+            model=body.model,
+            asset_ids=body.asset_ids,
+        )
+    except KeyError:
+        raise HTTPException(404, "项目不存在")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
+@app.post("/api/projects/{project_id}/studio/complete-content")
+def api_studio_complete_content(project_id: str, body: CompleteContentBody):
+    from . import studio_pipeline as sp
+
+    try:
+        return sp.complete_project_content(
+            project_id,
+            use_llm=body.use_llm,
+            model=body.model,
+            include_assets=body.include_assets,
+            include_outline=body.include_outline,
+            include_video_scripts=body.include_video_scripts,
+            only_missing_scripts=body.only_missing_scripts,
+            script_limit=body.script_limit,
+            asset_ids=body.asset_ids,
+            episode_ids=body.episode_ids,
+        )
+    except KeyError:
+        raise HTTPException(404, "项目不存在")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
+@app.post("/api/projects/{project_id}/studio/batch-generate-images")
+def api_studio_batch_images(project_id: str, body: BatchAssetImagesBody):
+    try:
+        return services.batch_generate_asset_images(
+            project_id,
+            kind=body.kind,
+            only_missing=body.only_missing,
+            limit=body.limit,
+            ids=body.ids,
+        )
+    except KeyError:
+        raise HTTPException(404, "项目不存在")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+
+
+@app.post("/api/projects/{project_id}/studio/batch-video-scripts")
+def api_studio_batch_video_scripts(project_id: str, body: BatchVideoScriptsBody):
+    from . import studio_pipeline as sp
+
+    try:
+        services.get_project(project_id)
+    except KeyError:
+        raise HTTPException(404, "项目不存在")
+    eps = services.list_episodes(project_id)
+    id_set = {str(x).strip() for x in (body.episode_ids or []) if str(x).strip()}
+    out = []
+    errors = []
+    n = 0
+    limit = body.limit
+    if id_set:
+        limit = max(limit, len(id_set))
+    for ep in eps:
+        if id_set and ep["id"] not in id_set:
+            continue
+        if body.only_missing and (ep.get("storyboard_md") or "").strip():
+            continue
+        if n >= limit:
+            break
+        try:
+            r = sp.generate_episode_video_script(
+                project_id,
+                ep["id"],
+                use_llm=body.use_llm,
+                model=body.model,
+            )
+            out.append(
+                {
+                    "episode_id": ep["id"],
+                    "ep_num": ep.get("ep_num"),
+                    "shot_count": r.get("shot_count"),
+                }
+            )
+            n += 1
+        except Exception as e:
+            errors.append(
+                {
+                    "episode_id": ep["id"],
+                    "ep_num": ep.get("ep_num"),
+                    "error": str(e)[:200],
+                }
+            )
+            n += 1
+    return {"generated": len(out), "failed": len(errors), "items": out, "errors": errors}
+
+
 # ---------- Episodes ----------
 
 class EpisodeUpdate(BaseModel):
@@ -431,7 +851,8 @@ def api_episodes_list(project_id: str):
 def api_episode_get(episode_id: str):
     try:
         ep = services.get_episode(episode_id)
-        st = services.compute_episode_status(episode_id)
+        # 复用已取到的 ep，避免再跑一遍 get_episode（打开成片会明显变慢）
+        st = services.compute_episode_status(episode_id, ep_row=ep, project_id=ep.get("project_id"))
         ep["pipeline"] = st["pipeline"]
         ep["production"] = st["detail"]
         return ep
@@ -474,6 +895,8 @@ def api_job_start(project_id: str, body: JobStart):
         return services.start_job(
             project_id, body.stage_id, body.episode_id, body.params
         )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     except RuntimeError as e:
         raise HTTPException(409, str(e))
 
@@ -486,7 +909,40 @@ def api_job_get(job_id: str):
         raise HTTPException(404, "任务不存在")
 
 
+@app.post("/api/jobs/{job_id}/stop")
+def api_job_stop(job_id: str):
+    """停止进行中的任务；已生成段落保留，可再提交「继续补全」。"""
+    try:
+        return services.cancel_job(job_id)
+    except KeyError:
+        raise HTTPException(404, "任务不存在")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 # ---------- Files ----------
+
+@app.get("/api/projects/{project_id}/media-url")
+def api_project_media_url(project_id: str, path: str, v: Optional[str] = None):
+    """签发可给 <video> 直接播放的短期 URL（支持 Range / 拖拽进度，无需整文件下载）。"""
+    rel = (path or "").strip().lstrip("/")
+    if not rel or ".." in rel.split("/"):
+        raise HTTPException(400, "非法路径")
+    base = db.project_dir(project_id).resolve()
+    target = (base / rel).resolve()
+    if not str(target).startswith(str(base)) or not target.is_file():
+        raise HTTPException(404, "文件不存在")
+    token = _issue_media_token(project_id, rel)
+    path_enc = "/".join(quote(seg, safe="") for seg in rel.split("/"))
+    q = {"media_token": token}
+    if v:
+        q["v"] = v
+    return {
+        "url": f"/api/projects/{project_id}/files/{path_enc}?{urlencode(q)}",
+        "path": rel,
+        "expires_in": MEDIA_TOKEN_TTL_SEC,
+    }
+
 
 @app.get("/api/projects/{project_id}/files/{file_path:path}")
 def api_project_file(project_id: str, file_path: str):
@@ -494,8 +950,12 @@ def api_project_file(project_id: str, file_path: str):
     target = (base / file_path).resolve()
     if not str(target).startswith(str(base)) or not target.is_file():
         raise HTTPException(404, "文件不存在")
-    return FileResponse(target)
-
+    # FileResponse 支持 Range，浏览器可边下边播、拖拽进度条
+    return FileResponse(
+        target,
+        filename=target.name,
+        media_type=None,
+    )
 
 @app.post("/api/episodes/{episode_id}/shots/{shot_num}/image")
 async def api_upload_shot_image(

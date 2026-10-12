@@ -1,5 +1,5 @@
-# -*- coding: utf-8
-"""单镜 MP4 补混音（Comfy 未写入音轨时的兜底：TTS + 简易 BGM + ffmpeg mux）。"""
+# -*- coding: utf-8 -*-
+"""分镜 MP4 救急补音：剥原轨 → 按角色 TTS + 轻环境床混入（H3 无声/坏轨时用）。"""
 from __future__ import annotations
 
 import json
@@ -125,8 +125,11 @@ def _polish_speech_wav(path: Path) -> None:
 
 
 def _master_mix_wav(path: Path) -> None:
-    """成片轻量限幅，保留环境低频。"""
+    """成片轻量限幅；高通不宜过高，否则听感像电话/电流。"""
     tmp = path.with_suffix(".master.wav")
+    master_af = (
+        os.environ.get("DRAMA10_MASTER_AF") or "highpass=f=70,alimiter=limit=0.95"
+    ).strip()
     try:
         subprocess.check_call(
             [
@@ -137,7 +140,7 @@ def _master_mix_wav(path: Path) -> None:
                 "-i",
                 str(path),
                 "-af",
-                "highpass=f=200,alimiter=limit=0.95",
+                master_af,
                 str(tmp),
             ],
             timeout=120,
@@ -150,31 +153,48 @@ def _master_mix_wav(path: Path) -> None:
         tmp.unlink(missing_ok=True)
 
 
-def _run_tts(text: str, role: str, dest: Path, *, project_id: str) -> None:
+def _run_tts(
+    text: str,
+    role: str,
+    dest: Path,
+    *,
+    project_id: str,
+    voice: Optional[str] = None,
+) -> None:
     from .drama10_tts import synthesize_speech_file
 
-    synthesize_speech_file(dest, text, role, project_id=project_id)
+    synthesize_speech_file(dest, text, role, project_id=project_id, voice=voice)
 
 
-def _voices_from_shot(shot: Dict[str, Any], prompt_block: str) -> List[Dict[str, Any]]:
+def _voices_from_shot(
+    shot: Dict[str, Any], prompt_block: str, *, project_id: str = ""
+) -> List[Dict[str, Any]]:
     raw = shot.get("voices")
     if raw is None:
         try:
             raw = json.loads(shot.get("voices_json") or "[]")
         except json.JSONDecodeError:
             raw = []
-    if isinstance(raw, list) and raw:
-        return raw
     out: List[Dict[str, Any]] = []
-    for m in re.finditer(
-        r"旁白\s*[：:]\s*「(.+?)」(?:\s*[（(]([\d.]+)\s*秒)?",
-        prompt_block,
-        re.S,
-    ):
-        item: Dict[str, Any] = {"role": "旁白", "text": m.group(1).strip()}
-        if m.group(2):
-            item["start_sec"] = float(m.group(2))
-        out.append(item)
+    if isinstance(raw, list) and raw:
+        out = [dict(x) for x in raw if isinstance(x, dict)]
+    else:
+        for m in re.finditer(
+            r"旁白\s*[：:]\s*「(.+?)」(?:\s*[（(]([\d.]+)\s*秒)?",
+            prompt_block,
+            re.S,
+        ):
+            item: Dict[str, Any] = {"role": "旁白", "text": m.group(1).strip()}
+            if m.group(2):
+                item["start_sec"] = float(m.group(2))
+            out.append(item)
+    if project_id and out:
+        try:
+            from .services import _enrich_voices_from_assets
+
+            out = _enrich_voices_from_assets(project_id, out)
+        except Exception:
+            pass
     return out
 
 
@@ -184,8 +204,14 @@ def _sanitize_ambience_text(text: str) -> str:
     t = re.sub(r"\bdrone\b", "wind bed", t, flags=re.I)
     t = re.sub(r"\brumble\b", "room tone", t, flags=re.I)
     t = re.sub(r"\blow\s+rumble\b", "soft room tone", t, flags=re.I)
-    t = re.sub(r"电流|嗡鸣|合成器|低频嗡", " ", t)
-    return re.sub(r"\s+", " ", t).strip()
+    # HVAC/hum 会被模型听成「电流声」
+    t = re.sub(r"\bHVAC\b", "soft air", t, flags=re.I)
+    t = re.sub(r"\bhum\b|\bhums\b|\bhumming\b", "air", t, flags=re.I)
+    t = re.sub(r"电流|嗡鸣|合成器|低频嗡|空调嗡|电流声", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    if not t:
+        t = "quiet wooden room, soft distant wind, light fabric rustle, natural room tone"
+    return t
 
 
 def _ambience_from_shot(shot: Dict[str, Any], prompt_block: str) -> str:
@@ -206,7 +232,7 @@ def _ambience_from_shot(shot: Dict[str, Any], prompt_block: str) -> str:
         return _sanitize_ambience_text(m.group(1).strip())[:320]
     default = (
         os.environ.get("DRAMA10_DEFAULT_AMBIENCE")
-        or "wind air cinematic atmosphere, soft snow room tone, continuous bed"
+        or "quiet wooden interior, soft distant wind, light ceramic wood contact, natural room tone"
     )
     return _sanitize_ambience_text(default)
 
@@ -218,7 +244,20 @@ def mux_shot_mp4_if_silent(
     *,
     force: bool = False,
 ) -> bool:
-    """为 shot_XX.mp4 写入 Web 混音（TTS+环境+BGM），丢弃原 H3/Comfy 音轨。"""
+    """已禁用：成片只使用 MiniMax H3 原生音轨，禁止 Web TTS 混音。"""
+    raise RuntimeError(
+        "已禁止 Web 混音/补音。请使用 MiniMax H3 原生带声音成片；"
+        "若无声请检查脚本或重做分镜图后重跑。"
+    )
+
+
+def _mux_shot_mp4_with_tts(
+    project_id: str,
+    episode_id: str,
+    shot_num: int,
+    *,
+    force: bool = False,
+) -> bool:
     from .services import _build_drama10_prompt, get_episode
 
     ep = get_episode(episode_id)
@@ -238,7 +277,7 @@ def mux_shot_mp4_if_silent(
     prompt = _build_drama10_prompt(project_id, episode_id, shot_nums=[sn], for_video=True)
     blocks = extract_shot_blocks(prompt)
     block = blocks.get(sn) or ""
-    voices = _voices_from_shot(shot, block)
+    voices = _voices_from_shot(shot, block, project_id=project_id)
     ambience = _ambience_from_shot(shot, block)
     dur = _probe_duration(mp4)
     print(
@@ -272,7 +311,14 @@ def mux_shot_mp4_if_silent(
                 continue
             role = (v.get("role") or "旁白").strip()
             st = float(v.get("start_sec") or 0.8)
+            # 口型略先于配音：按资产/脚本 start_sec，再加可配置嘴型滞后
+            lag = float(os.environ.get("DRAMA10_MOUTH_LAG", "0.35") or 0.35)
+            st = max(0.2, st + lag)
             seg = tdir / f"seg_{i}.wav"
+            print(
+                f"[shot_audio_mux] line#{i+1} role={role!r} start={st:.2f}s text={text[:36]!r}",
+                flush=True,
+            )
             if is_crowd_role(role):
                 render_crowd_speech_wav(
                     project_id,
@@ -285,7 +331,8 @@ def mux_shot_mp4_if_silent(
                 _polish_speech_wav(seg)
             else:
                 tts = tdir / f"tts_{i}.mp3"
-                _run_tts(text, role, tts, project_id=project_id)
+                tv = (v.get("tts_voice") or "").strip() or None
+                _run_tts(text, role, tts, project_id=project_id, voice=tv)
                 delay_ms = max(0, int(st * 1000))
                 subprocess.check_call(
                     [
@@ -296,7 +343,7 @@ def mux_shot_mp4_if_silent(
                         "-i",
                         str(tts),
                         "-af",
-                        f"adelay={delay_ms}|{delay_ms},highpass=f=110,lowpass=11000",
+                        f"adelay={delay_ms}|{delay_ms},highpass=f=80,lowpass=12000",
                         str(seg),
                     ],
                     timeout=60,
@@ -336,13 +383,21 @@ def mux_shot_mp4_if_silent(
 
         timeline = tdir / "mix.wav"
         amb_wav = tdir / "amb.wav"
-        write_ambience_wav(amb_wav, ambience, dur + 0.5, seed=sn * 17 + ep_num)
-        amb_gain = float(os.environ.get("DRAMA10_AMB_MIX_GAIN", "1.85"))
-        speech_gain = float(os.environ.get("DRAMA10_SPEECH_MIX_GAIN", "1.05"))
+        # 补音环境床压低，避免盖过人声 / 听成电流底噪
+        amb_text = _sanitize_ambience_text(
+            ambience or "quiet wooden room, soft distant wind, natural room tone"
+        )
+        write_ambience_wav(amb_wav, amb_text, dur + 0.5, seed=sn * 17 + ep_num)
+        # 默认几乎关掉合成环境床；电流感多半来自旧 hum/高增益 ambience
+        amb_gain = float(os.environ.get("DRAMA10_REMUX_AMB_GAIN", "0.18"))
+        speech_gain = float(os.environ.get("DRAMA10_REMUX_SPEECH_GAIN", "1.4"))
         layers: List[tuple] = []
         if speech_mix.is_file():
             layers.append((speech_mix, speech_gain))
-        layers.append((amb_wav, amb_gain))
+        if amb_gain > 0.01:
+            layers.append((amb_wav, amb_gain))
+        elif not layers:
+            layers.append((amb_wav, 0.05))
 
         if len(layers) == 1:
             Path(layers[0][0]).replace(timeline)
@@ -376,6 +431,11 @@ def mux_shot_mp4_if_silent(
             )
 
         _master_mix_wav(timeline)
+        # 高通过高（200Hz）易产生「电流/电话」感；补音用更柔和的整形
+        remux_af = (
+            os.environ.get("DRAMA10_REMUX_AF")
+            or "highpass=f=80,lowpass=f=12000,dynaudnorm=f=150:g=8,volume=1.05,alimiter=limit=0.95"
+        )
         subprocess.check_call(
             [
                 "ffmpeg",
@@ -385,7 +445,7 @@ def mux_shot_mp4_if_silent(
                 "-i",
                 str(timeline),
                 "-af",
-                "highpass=f=200,lowpass=11000,dynaudnorm=f=120:g=12,volume=1.25,alimiter=limit=0.97",
+                remux_af,
                 str(timeline.with_suffix(".loud.wav")),
             ],
             timeout=60,
@@ -439,22 +499,7 @@ def remux_episode_shots(
     shot_nums: Optional[List[int]] = None,
     force: bool = True,
 ) -> List[int]:
-    """强制为指定镜（默认全集）重写音轨。"""
-    from .services import get_episode
-
-    ep = get_episode(episode_id)
-    nums = shot_nums or [int(s["shot_num"]) for s in ep.get("shots") or []]
-    done: List[int] = []
-    for sn in nums:
-        mp4 = (
-            db.project_dir(project_id)
-            / "episodes"
-            / f"ep{int(ep['ep_num']):02d}"
-            / "shots"
-            / f"shot_{int(sn):02d}.mp4"
-        )
-        if not mp4.is_file():
-            continue
-        mux_shot_mp4_if_silent(project_id, episode_id, int(sn), force=force)
-        done.append(int(sn))
-    return done
+    """已禁用：禁止整集 Web 混音。"""
+    raise RuntimeError(
+        "已禁止 Web 混音。成片音轨仅来自 MiniMax H3 原生输出。"
+    )

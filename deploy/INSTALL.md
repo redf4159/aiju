@@ -1,73 +1,94 @@
-# 《冰境》制作台 · 新服务器安装指南
+# 漫剧工作台 · 新服务器安装指南
 
-本仓库为 **Web 制作台 + ComfyUI Drama10 节点参考 + 分集 JSON 模板**。不含 ComfyUI 本体、MiniMax 权重与 OhMyGPT 密钥。
+仓库：[https://github.com/redf4159/aiju](https://github.com/redf4159/aiju)
 
-## 1. 目录约定（与线上一致）
+本仓库包含：**Web 漫剧制作台**、**ComfyUI Drama10 节点参考**、**部署单元**、分集文档与 JSON 模板。  
+不含 ComfyUI 本体、MiniMax 权重、OhMyGPT / Comfy Token 等密钥。
+
+## 线上对照（当前预览）
+
+| 项 | 值 |
+|----|-----|
+| 制作台 | https://dj.preview.3swl.com/ |
+| 预览机代码 | `/opt/ai-forge/bingjing/web`（systemd `bingjing-web` → `:8097`） |
+| GPU / Comfy | H3 `175.155.64.171`，Comfy `:8000`，经隧道到预览机 `127.0.0.1:18000` |
+| Drama10 节点 | H3 `/home/linux/ComfyUI/custom_nodes/ComfyUI_Drama10/drama10_nodes.py` |
+
+旧文档中的 `/home/linux/bingjing/web:8001` 为 H3 本机制作台路径，仍可用同一套 `web/` 部署。
+
+## 1. 目录约定
 
 | 路径 | 说明 |
 |------|------|
-| `/home/linux/bingjing/web` | 本仓库 `web/` 内容（`app`、`data/ep*.json`、`requirements.txt`） |
-| `/home/linux/ComfyUI` | ComfyUI 安装目录 |
-| `/home/linux/ComfyUI/custom_nodes/ComfyUI_Drama10/drama10_nodes.py` | 由 `comfyui/workflows/_server_ref_drama10_nodes.py` 覆盖部署 |
-| `/home/linux/bingjing/web/data` | SQLite `studio.db`、项目 `projects/`（**不随 git 覆盖**） |
+| `<BINGJING>/web` | 本仓库 `web/`（`app/`、`requirements.txt`、可选 `data/ep*.json`） |
+| ComfyUI | 如 `/home/linux/ComfyUI` |
+| Drama10 | 用 `comfyui/workflows/_server_ref_drama10_nodes.py` 覆盖 `custom_nodes/ComfyUI_Drama10/drama10_nodes.py` |
+| `web/data` | `studio.db`、`projects/`（**不进 git，部署勿覆盖**） |
 
 ## 2. 依赖
 
-- Ubuntu 22.04+，Python 3.10+（推荐与线上一致：`/home/linux/comfyui-venv`）
-- ffmpeg、ffprobe（混音必需）
-- ComfyUI + MiniMax H3 节点（图生视频）
-- 可选：edge-tts 或 OhMyGPT（TTS / 分镜 API）
+- Ubuntu 22.04+，Python 3.10+
+- ffmpeg / ffprobe
+- ComfyUI + MiniMax H3（图生视频 + 原生音轨）
+- 可选：edge-tts / OhMyGPT（分镜 API、脚本 LLM）
 
 ```bash
 sudo apt-get update && sudo apt-get install -y ffmpeg git
-python3 -m venv /home/linux/comfyui-venv
-source /home/linux/comfyui-venv/bin/activate
-pip install -r /home/linux/bingjing/web/requirements.txt
+python3 -m venv /opt/ai-forge/bingjing/venv   # 或 /home/linux/comfyui-venv
+source /opt/ai-forge/bingjing/venv/bin/activate
+pip install -r web/requirements.txt
 ```
 
 ## 3. 部署 Web
 
 ```bash
-git clone <你的仓库地址> /tmp/bingjing-src
-rsync -a --delete /tmp/bingjing-src/web/app/ /home/linux/bingjing/web/app/
-cp /tmp/bingjing-src/web/requirements.txt /home/linux/bingjing/web/
-mkdir -p /home/linux/bingjing/web/data
-# 首次：复制模板剧本（若 data 为空）
-cp -n /tmp/bingjing-src/web/data/ep*.json /home/linux/bingjing/web/data/ 2>/dev/null || true
+git clone https://github.com/redf4159/aiju.git /tmp/aiju
+APP=/opt/ai-forge/bingjing/web   # 或 /home/linux/bingjing/web
+mkdir -p "$APP"
+rsync -a --delete /tmp/aiju/web/app/ "$APP/app/"
+cp /tmp/aiju/web/requirements.txt "$APP/"
+mkdir -p "$APP/data"
+cp -n /tmp/aiju/web/data/ep*.json "$APP/data/" 2>/dev/null || true
+cp -n /tmp/aiju/web/data/gpu_vram_test_ep*.json "$APP/data/" 2>/dev/null || true
 ```
 
-安装 systemd 用户服务（按需改 `WEB_USER` / `WEB_PASSWORD` / 端口）：
+systemd 示例见 `deploy/bingjing-web.service`（按需改 `WorkingDirectory`、`ExecStart` 的 venv、端口、`WEB_USER`/`WEB_PASSWORD`、`COMFYUI_URL`）。
 
 ```bash
-mkdir -p ~/.config/systemd/user
-cp /tmp/bingjing-src/deploy/bingjing-web.service ~/.config/systemd/user/
-# 编辑 Environment：OhMyGPT Key 建议在制作台 UI 保存，勿写进 git
-systemctl --user daemon-reload
-systemctl --user enable --now bingjing-web.service
+# 预览机示例（系统级）
+cp /tmp/aiju/deploy/bingjing-web.service /etc/systemd/system/
+# 编辑 Environment 后：
+systemctl daemon-reload
+systemctl enable --now bingjing-web.service
 ```
 
-首次启动后访问制作台 → **全局制作 → OhMyGPT 密钥** 保存 API Key。
+首次登录制作台 → **制作设置** 配置 OhMyGPT / Comfy Token（勿写入 git）。
 
-## 4. 部署 Drama10 节点
+## 4. 部署 Drama10 节点（H3）
 
 ```bash
-cp /tmp/bingjing-src/comfyui/workflows/_server_ref_drama10_nodes.py \
+cp /tmp/aiju/comfyui/workflows/_server_ref_drama10_nodes.py \
   /home/linux/ComfyUI/custom_nodes/ComfyUI_Drama10/drama10_nodes.py
-systemctl --user restart bingjing-comfy.service   # 若有
+# 可选：web/scripts/h3_native_audio_patch.py 为增量补丁说明（节点文件已含原生音轨逻辑）
+systemctl --user restart bingjing-comfy.service
 ```
 
-## 5. 环境变量要点（见 `deploy/bingjing-web.service`）
+成片策略：**只用 MiniMax H3 原生音轨**；禁止 Web TTS 混音；画面禁止烧录字幕。
 
-- `BINGJING_DATA=/home/linux/bingjing/web/data`
-- `COMFYUI_ROOT=/home/linux/ComfyUI`
-- `STORYBOARD_IMAGE_SIZE=1536x864`（OhMyGPT 出图最小像素）
-- `DRAMA10_WEB_AUDIO_ONLY=1`（Comfy 单镜无声，Web 独占混音）
-- `DRAMA10_AMB_MIX_GAIN` / `DRAMA10_BGM_MIX_GAIN`（环境音量）
+## 5. 环境变量要点
 
-## 6. 同步更新（开发机）
+见 `deploy/bingjing-web.service`：
 
-Windows：`deploy/sync_to_server.ps1`（勿把 `data/studio.db` 同步上去）。
+- `COMFYUI_URL`：本机 `http://127.0.0.1:8000` 或隧道 `http://127.0.0.1:18000`
+- `COMFYUI_ROOT` / `BINGJING_DATA`
+- `DRAMA10_WEB_AUDIO_ONLY=0`（由 H3 出原生声；Web 不再盖轨）
+- `DRAMA10_HUM_FALLBACK_REMUX=0`（禁止无声时 Web 补音）
+- 读 Comfy 日志 ETA（可选）：`COMFY_LOG_SSH_*`、`COMFY_LOG_PATH`
+
+## 6. 本地同步
+
+Windows：`deploy/sync_to_server.ps1`（勿同步 `data/studio.db` / `projects/`）。
 
 ---
 
-**安全**：仓库内不含 SSH 密码、OhMyGPT Key；上级目录 `duanju/_*.py` 运维脚本请勿提交 git。
+**安全**：仓库不含 SSH 密码与 API Key；`web/_*.py` 临时运维脚本已在 `.gitignore`。

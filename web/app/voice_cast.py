@@ -87,9 +87,17 @@ def normalize_cast(raw: Any) -> List[Dict[str, Any]]:
 def merge_voice_cast(
     project_cast: Any,
     episode_cast: Any = None,
+    *,
+    fallback_default: bool = False,
 ) -> List[Dict[str, Any]]:
-    """分集条目覆盖同 role 的全剧条目。"""
-    base = normalize_cast(project_cast) or list(DEFAULT_VOICE_CAST)
+    """分集条目覆盖同 role 的全剧条目。
+
+    默认不回退到《冰镜》DEFAULT_VOICE_CAST，避免污染独立短剧。
+    仅种子项目恢复时可传 fallback_default=True。
+    """
+    base = normalize_cast(project_cast)
+    if not base and fallback_default:
+        base = list(DEFAULT_VOICE_CAST)
     ep = normalize_cast(episode_cast)
     if not ep:
         return base

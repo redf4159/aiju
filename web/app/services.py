@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 import threading
@@ -40,6 +41,8 @@ from .generation_prefs import (
     apply_negative_to_visual,
     default_prefs,
     effective_style,
+    resolve_still_canvas,
+    resolve_video_source_canvas,
     parse_prefs,
     style_prefix_for_shot,
     _is_black_shot,
@@ -91,6 +94,41 @@ def save_ohmygpt_settings(
     )
 
 
+def get_video_backend_settings() -> Dict[str, Any]:
+    from .studio_settings import get_video_backend_settings_public
+
+    return get_video_backend_settings_public()
+
+
+def save_video_backend_settings(
+    *,
+    backend: Optional[str] = None,
+    ppio_api_key: Optional[str] = None,
+    ppio_endpoint_key: Optional[str] = None,
+    ppio_async_base: Optional[str] = None,
+    clear_ppio_key: bool = False,
+    minimax_api_key: Optional[str] = None,
+    minimax_api_base: Optional[str] = None,
+    minimax_model: Optional[str] = None,
+    minimax_resolution: Optional[str] = None,
+    clear_minimax_key: bool = False,
+) -> Dict[str, Any]:
+    from .studio_settings import update_video_backend_settings
+
+    return update_video_backend_settings(
+        backend=backend,
+        ppio_api_key=ppio_api_key,
+        ppio_endpoint_key=ppio_endpoint_key,
+        ppio_async_base=ppio_async_base,
+        clear_ppio_key=clear_ppio_key,
+        minimax_api_key=minimax_api_key,
+        minimax_api_base=minimax_api_base,
+        minimax_model=minimax_model,
+        minimax_resolution=minimax_resolution,
+        clear_minimax_key=clear_minimax_key,
+    )
+
+
 def list_script_llm_model_options() -> List[Dict[str, str]]:
     from .drama10_script_llm import list_script_model_options
 
@@ -110,9 +148,104 @@ from .asset_recovery import (
 def list_projects() -> List[Dict[str, Any]]:
     with db.connect() as conn:
         rows = conn.execute(
-            "SELECT * FROM projects ORDER BY updated_at DESC"
+            """
+            SELECT p.*, d.script_meta_json, d.novel_md
+            FROM projects p
+            LEFT JOIN project_docs d ON d.project_id = p.id
+            ORDER BY p.updated_at DESC
+            """
         ).fetchall()
-    return [dict(r) for r in rows]
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        item = dict(r)
+        raw = item.pop("script_meta_json", None) or "{}"
+        novel = item.pop("novel_md", None) or ""
+        try:
+            meta = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        except json.JSONDecodeError:
+            meta = {}
+        item["docs"] = {"script_meta": meta, "script_meta_json": raw, "novel_md": novel}
+        out.append(item)
+    return out
+
+
+def delete_project(project_id: str) -> None:
+    """删除短剧项目及其数据库行、磁盘资产。不允许误删时通过 API 恢复。"""
+    import shutil
+
+    from .asset_recovery import is_bingjing_project_id
+
+    pid = (project_id or "").strip()
+    if not pid:
+        raise ValueError("项目 ID 为空")
+    proj = get_project(pid)
+    if is_bingjing_project_id(pid) or (proj.get("name") or "").strip() == "冰镜":
+        raise ValueError("系统种子项目「冰镜」不可删除")
+    with db.connect() as conn:
+        ep_ids = [
+            r["id"]
+            for r in conn.execute(
+                "SELECT id FROM episodes WHERE project_id=?", (pid,)
+            ).fetchall()
+        ]
+        for eid in ep_ids:
+            conn.execute("DELETE FROM shots WHERE episode_id=?", (eid,))
+        conn.execute("DELETE FROM episodes WHERE project_id=?", (pid,))
+        conn.execute("DELETE FROM characters WHERE project_id=?", (pid,))
+        conn.execute("DELETE FROM scenes WHERE project_id=?", (pid,))
+        conn.execute("DELETE FROM props WHERE project_id=?", (pid,))
+        conn.execute("DELETE FROM jobs WHERE project_id=?", (pid,))
+        conn.execute("DELETE FROM project_docs WHERE project_id=?", (pid,))
+        conn.execute("DELETE FROM projects WHERE id=?", (pid,))
+    pdir = db.DATA_ROOT / "projects" / pid
+    if pdir.is_dir():
+        shutil.rmtree(pdir, ignore_errors=True)
+
+
+def clear_project_media(project_id: str) -> Dict[str, Any]:
+    """清除项目下分镜图/视频路径与磁盘媒体（剧本与人物库保留）。"""
+    import shutil
+
+    pid = (project_id or "").strip()
+    get_project(pid)
+    removed = {"images": 0, "videos": 0, "dirs": 0}
+    with db.connect() as conn:
+        eps = conn.execute(
+            "SELECT id, ep_num FROM episodes WHERE project_id=?", (pid,)
+        ).fetchall()
+        for ep in eps:
+            conn.execute(
+                "UPDATE shots SET image_path='', video_path='' WHERE episode_id=?",
+                (ep["id"],),
+            )
+            conn.execute(
+                "UPDATE episodes SET video_path='' WHERE id=?",
+                (ep["id"],),
+            )
+    base = db.project_dir(pid)
+    for sub in ("episodes",):
+        root = base / sub
+        if not root.is_dir():
+            continue
+        for p in root.rglob("*"):
+            if not p.is_file():
+                continue
+            if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".mp4", ".webm"}:
+                try:
+                    p.unlink()
+                    if p.suffix.lower() == ".mp4" or p.suffix.lower() == ".webm":
+                        removed["videos"] += 1
+                    else:
+                        removed["images"] += 1
+                except OSError:
+                    pass
+    # 角色参考图也清掉（避免串项目残留）
+    char_root = base / "characters"
+    if char_root.is_dir():
+        shutil.rmtree(char_root, ignore_errors=True)
+        removed["dirs"] += 1
+        char_root.mkdir(parents=True, exist_ok=True)
+    return removed
 
 
 def create_project(
@@ -180,7 +313,18 @@ def get_project(project_id: str) -> Dict[str, Any]:
             "SELECT * FROM project_docs WHERE project_id=?", (project_id,)
         ).fetchone()
     out = dict(row)
-    out["docs"] = dict(doc) if doc else {}
+    docs = dict(doc) if doc else {}
+    raw_meta = docs.get("script_meta_json") or "{}"
+    if isinstance(raw_meta, str):
+        try:
+            docs["script_meta"] = json.loads(raw_meta or "{}")
+        except json.JSONDecodeError:
+            docs["script_meta"] = {}
+    elif isinstance(raw_meta, dict):
+        docs["script_meta"] = raw_meta
+    else:
+        docs["script_meta"] = {}
+    out["docs"] = docs
     return out
 
 
@@ -217,13 +361,20 @@ def get_generation_prefs(project_id: str) -> Dict[str, Any]:
 
 
 def update_project_docs(project_id: str, **fields: Any) -> Dict[str, Any]:
-    allowed = ("outline_md", "series_scripts_note", "pipeline_json", "generation_prefs_json")
+    allowed = (
+        "outline_md",
+        "series_scripts_note",
+        "pipeline_json",
+        "generation_prefs_json",
+        "novel_md",
+        "script_meta_json",
+    )
     parts = []
     vals: List[Any] = []
     for k, v in fields.items():
         if k in allowed and v is not None:
             parts.append(f"{k}=?")
-            if k in ("pipeline_json", "generation_prefs_json"):
+            if k in ("pipeline_json", "generation_prefs_json", "script_meta_json"):
                 vals.append(json.dumps(v, ensure_ascii=False) if isinstance(v, dict) else v)
             else:
                 vals.append(v)
@@ -267,6 +418,33 @@ def _normalize_character(row: Dict[str, Any]) -> Dict[str, Any]:
             )
         elif isinstance(item, str) and item.strip():
             out["ref_images"].append({"path": item.strip(), "label": "形象"})
+    eps = _json_list(out.get("episodes_json"))
+    out["episodes"] = sorted(
+        {int(x) for x in eps if str(x).isdigit() or isinstance(x, int)}
+    )
+    return out
+
+
+def _normalize_prop(row: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(row)
+    images = _json_list(out.get("ref_images_json"))
+    legacy = (out.get("ref_image") or "").strip()
+    if legacy and not any(
+        (isinstance(x, dict) and x.get("path") == legacy) or x == legacy for x in images
+    ):
+        images.insert(0, {"path": legacy, "label": "参考"})
+    out["ref_images"] = []
+    for item in images:
+        if isinstance(item, dict) and item.get("path"):
+            out["ref_images"].append(
+                {"path": str(item["path"]), "label": str(item.get("label") or "形象")}
+            )
+        elif isinstance(item, str) and item.strip():
+            out["ref_images"].append({"path": item.strip(), "label": "形象"})
+    eps = _json_list(out.get("episodes_json"))
+    out["episodes"] = sorted(
+        {int(x) for x in eps if str(x).isdigit() or isinstance(x, int)}
+    )
     return out
 
 
@@ -318,19 +496,28 @@ def upsert_character(project_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
             ref_image = ref_image or imgs[0]["path"]
     except (json.JSONDecodeError, TypeError, IndexError):
         pass
+    episodes_json = data.get("episodes_json")
+    if episodes_json is None and "episodes" in data:
+        episodes_json = json.dumps(data.get("episodes") or [], ensure_ascii=False)
+    elif isinstance(episodes_json, list):
+        episodes_json = json.dumps(episodes_json, ensure_ascii=False)
+    elif not episodes_json:
+        episodes_json = "[]"
     with db.connect() as conn:
         conn.execute(
             """
             INSERT INTO characters (
                 id, project_id, episode_id, name, role_note, visual_prompt, ref_image,
-                sort_order, voice_desc, voice_samples_json, ref_images_json, tts_voice
+                sort_order, voice_desc, voice_samples_json, ref_images_json, tts_voice,
+                episodes_json
             )
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
               name=excluded.name, role_note=excluded.role_note, visual_prompt=excluded.visual_prompt,
               ref_image=excluded.ref_image, episode_id=excluded.episode_id, sort_order=excluded.sort_order,
               voice_desc=excluded.voice_desc, voice_samples_json=excluded.voice_samples_json,
-              ref_images_json=excluded.ref_images_json, tts_voice=excluded.tts_voice
+              ref_images_json=excluded.ref_images_json, tts_voice=excluded.tts_voice,
+              episodes_json=excluded.episodes_json
             """,
             (
                 cid,
@@ -345,6 +532,7 @@ def upsert_character(project_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
                 voice_samples,
                 ref_images,
                 (data.get("tts_voice") or "").strip().lower(),
+                episodes_json,
             ),
         )
         row = conn.execute("SELECT * FROM characters WHERE id=?", (cid,)).fetchone()
@@ -385,11 +573,11 @@ def generate_character_image_via_ohmygpt(
     from .character_ohmygpt import generate_character_portrait_file
 
     if not storyboard_image_api_ready():
-        raise RuntimeError("请先在「全局制作」保存 OhMyGPT API Key")
+        raise RuntimeError("请先在「制作设置」保存 OhMyGPT API Key")
     ch = get_character(project_id, character_id)
     proj = get_project(project_id)
     prefs = get_generation_prefs(project_id)
-    w, h = int(proj.get("width") or 640), int(proj.get("height") or 360)
+    w, h = resolve_still_canvas(proj, prefs)
     dest_dir = db.project_dir(project_id) / "characters" / character_id / "images"
     dest_dir.mkdir(parents=True, exist_ok=True)
     label = (angle_label or "正面").strip() or "正面"
@@ -405,9 +593,190 @@ def generate_character_image_via_ohmygpt(
         height=h,
         angle_label=label,
         extra=extra or "",
+        kind="character",
     )
     rel = str(dest.relative_to(db.project_dir(project_id))).replace("\\", "/")
     return append_character_ref_image(project_id, character_id, rel, label=f"AI·{label}")
+
+
+def generate_scene_image_via_ohmygpt(
+    project_id: str,
+    scene_id: str,
+    *,
+    extra: str = "",
+) -> Dict[str, Any]:
+    from .character_ohmygpt import generate_character_portrait_file
+
+    if not storyboard_image_api_ready():
+        raise RuntimeError("请先在「制作设置」保存 OhMyGPT API Key")
+    sc = None
+    for s in list_scenes(project_id):
+        if s.get("id") == scene_id:
+            sc = s
+            break
+    if not sc:
+        raise KeyError("scene not found")
+    proj = get_project(project_id)
+    prefs = get_generation_prefs(project_id)
+    w, h = resolve_still_canvas(proj, prefs)
+    dest_dir = db.project_dir(project_id) / "scenes" / scene_id / "images"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / f"ai_{uuid.uuid4().hex[:8]}.png"
+    name = sc.get("name") or sc.get("code") or "场景"
+    generate_character_portrait_file(
+        dest,
+        name=name,
+        visual_prompt=sc.get("visual_prompt") or name,
+        role_note=sc.get("role_note") or "场景空镜母景，无主要角色面部特写",
+        style_prefix=proj.get("style_prefix") or "",
+        prefs=prefs,
+        width=w,
+        height=h,
+        angle_label="场景母景",
+        extra=extra or "",
+        kind="scene",
+    )
+    rel = str(dest.relative_to(db.project_dir(project_id))).replace("\\", "/")
+    imgs = list(sc.get("ref_images") or [])
+    imgs.append({"path": rel, "label": "AI·场景"})
+    return upsert_scene(
+        project_id,
+        {
+            "id": scene_id,
+            "name": name,
+            "code": sc.get("code") or "",
+            "visual_prompt": sc.get("visual_prompt") or "",
+            "ref_image": rel,
+            "ref_images": imgs,
+            "episodes": sc.get("episodes") or [],
+            "sort_order": int(sc.get("sort_order") or 0),
+            "episode_id": sc.get("episode_id") or "",
+        },
+    )
+
+
+def generate_prop_image_via_ohmygpt(
+    project_id: str,
+    prop_id: str,
+    *,
+    extra: str = "",
+) -> Dict[str, Any]:
+    from .character_ohmygpt import generate_character_portrait_file
+
+    if not storyboard_image_api_ready():
+        raise RuntimeError("请先在「制作设置」保存 OhMyGPT API Key")
+    prop = get_prop(project_id, prop_id)
+    proj = get_project(project_id)
+    prefs = get_generation_prefs(project_id)
+    w, h = resolve_still_canvas(proj, prefs)
+    dest_dir = db.project_dir(project_id) / "props" / prop_id / "images"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / f"ai_{uuid.uuid4().hex[:8]}.png"
+    name = prop.get("name") or "道具"
+    generate_character_portrait_file(
+        dest,
+        name=name,
+        visual_prompt=prop.get("visual_prompt") or name,
+        role_note=prop.get("role_note") or "道具特写，干净背景",
+        style_prefix=proj.get("style_prefix") or "",
+        prefs=prefs,
+        width=w,
+        height=h,
+        angle_label="道具设定",
+        extra=extra or "",
+        kind="prop",
+    )
+    rel = str(dest.relative_to(db.project_dir(project_id))).replace("\\", "/")
+    return append_prop_ref_image(project_id, prop_id, rel, label="AI·道具")
+
+
+def batch_generate_asset_images(
+    project_id: str,
+    *,
+    kind: str = "characters",
+    only_missing: bool = True,
+    limit: int = 12,
+    ids: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """批量生成角色/场景/道具参考图（生成块图）。ids 指定时只处理这些资产，并逐个生成。"""
+    if not storyboard_image_api_ready():
+        raise RuntimeError("请先在「制作设置」保存 OhMyGPT API Key")
+    kind = (kind or "characters").strip()
+    id_set = {str(x).strip() for x in (ids or []) if str(x).strip()}
+    limit = max(1, min(40, int(limit or 12)))
+    if id_set:
+        limit = max(limit, len(id_set))
+        limit = min(40, limit)
+    done: List[Dict[str, Any]] = []
+    errors: List[Dict[str, str]] = []
+    if kind == "characters":
+        items = list_characters(project_id)
+        for ch in items:
+            if id_set and ch["id"] not in id_set:
+                continue
+            if only_missing and (ch.get("ref_images") or []):
+                continue
+            if len(done) + len(errors) >= limit:
+                break
+            try:
+                done.append(
+                    {
+                        "id": ch["id"],
+                        "name": ch.get("name"),
+                        "result": generate_character_image_via_ohmygpt(
+                            project_id, ch["id"]
+                        ),
+                    }
+                )
+            except Exception as e:
+                errors.append({"id": ch["id"], "name": ch.get("name") or "", "error": str(e)[:200]})
+    elif kind == "scenes":
+        items = list_scenes(project_id)
+        for sc in items:
+            if id_set and sc["id"] not in id_set:
+                continue
+            if only_missing and (sc.get("ref_images") or sc.get("ref_image")):
+                continue
+            if len(done) + len(errors) >= limit:
+                break
+            try:
+                done.append(
+                    {
+                        "id": sc["id"],
+                        "name": sc.get("name"),
+                        "result": generate_scene_image_via_ohmygpt(project_id, sc["id"]),
+                    }
+                )
+            except Exception as e:
+                errors.append({"id": sc["id"], "name": sc.get("name") or "", "error": str(e)[:200]})
+    elif kind == "props":
+        items = list_props(project_id)
+        for p in items:
+            if id_set and p["id"] not in id_set:
+                continue
+            if only_missing and (p.get("ref_images") or []):
+                continue
+            if len(done) + len(errors) >= limit:
+                break
+            try:
+                done.append(
+                    {
+                        "id": p["id"],
+                        "name": p.get("name"),
+                        "result": generate_prop_image_via_ohmygpt(project_id, p["id"]),
+                    }
+                )
+            except Exception as e:
+                errors.append({"id": p["id"], "name": p.get("name") or "", "error": str(e)[:200]})
+    else:
+        raise ValueError("kind 须为 characters / scenes / props")
+    return {
+        "kind": kind,
+        "generated": len(done),
+        "failed": len(errors),
+        "items": done,
+        "errors": errors,
+    }
 
 
 def generate_character_voice_via_ohmygpt(
@@ -477,14 +846,33 @@ def list_scenes(project_id: str, episode_id: Optional[str] = None) -> List[Dict]
 
 def upsert_scene(project_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
     sid = data.get("id") or str(uuid.uuid4())
+    episodes_json = data.get("episodes_json")
+    if episodes_json is None and "episodes" in data:
+        episodes_json = json.dumps(data.get("episodes") or [], ensure_ascii=False)
+    elif isinstance(episodes_json, list):
+        episodes_json = json.dumps(episodes_json, ensure_ascii=False)
+    elif not episodes_json:
+        episodes_json = "[]"
+    ref_images = data.get("ref_images_json")
+    if ref_images is None and "ref_images" in data:
+        ref_images = json.dumps(data.get("ref_images") or [], ensure_ascii=False)
+    elif isinstance(ref_images, list):
+        ref_images = json.dumps(ref_images, ensure_ascii=False)
+    elif not ref_images:
+        ref_images = "[]"
     with db.connect() as conn:
         conn.execute(
             """
-            INSERT INTO scenes (id, project_id, episode_id, code, name, visual_prompt, ref_image, sort_order)
-            VALUES (?,?,?,?,?,?,?,?)
+            INSERT INTO scenes (
+                id, project_id, episode_id, code, name, visual_prompt, ref_image,
+                sort_order, episodes_json, ref_images_json, role_note
+            )
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
               code=excluded.code, name=excluded.name, visual_prompt=excluded.visual_prompt,
-              ref_image=excluded.ref_image, episode_id=excluded.episode_id, sort_order=excluded.sort_order
+              ref_image=excluded.ref_image, episode_id=excluded.episode_id, sort_order=excluded.sort_order,
+              episodes_json=excluded.episodes_json, ref_images_json=excluded.ref_images_json,
+              role_note=excluded.role_note
             """,
             (
                 sid,
@@ -495,10 +883,116 @@ def upsert_scene(project_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
                 data.get("visual_prompt", ""),
                 data.get("ref_image", ""),
                 int(data.get("sort_order", 0)),
+                episodes_json,
+                ref_images,
+                data.get("role_note", "") or "",
             ),
         )
         row = conn.execute("SELECT * FROM scenes WHERE id=?", (sid,)).fetchone()
-    return dict(row)
+    out = dict(row)
+    out["episodes"] = _json_list(out.get("episodes_json"))
+    out["ref_images"] = _json_list(out.get("ref_images_json"))
+    return out
+
+
+def list_props(project_id: str, episode_id: Optional[str] = None) -> List[Dict]:
+    q = "SELECT * FROM props WHERE project_id=?"
+    params: List[Any] = [project_id]
+    if episode_id:
+        q += " AND episode_id=?"
+        params.append(episode_id)
+    else:
+        q += " AND (episode_id IS NULL OR episode_id='')"
+    q += " ORDER BY sort_order, name"
+    with db.connect() as conn:
+        rows = conn.execute(q, params).fetchall()
+    return [_normalize_prop(dict(r)) for r in rows]
+
+
+def get_prop(project_id: str, prop_id: str) -> Dict[str, Any]:
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM props WHERE id=? AND project_id=?",
+            (prop_id, project_id),
+        ).fetchone()
+    if not row:
+        raise KeyError("prop not found")
+    return _normalize_prop(dict(row))
+
+
+def upsert_prop(project_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    pid = data.get("id") or str(uuid.uuid4())
+    episodes_json = data.get("episodes_json")
+    if episodes_json is None and "episodes" in data:
+        episodes_json = json.dumps(data.get("episodes") or [], ensure_ascii=False)
+    elif isinstance(episodes_json, list):
+        episodes_json = json.dumps(episodes_json, ensure_ascii=False)
+    elif not episodes_json:
+        episodes_json = "[]"
+    ref_images = data.get("ref_images_json")
+    if ref_images is None and "ref_images" in data:
+        ref_images = json.dumps(data.get("ref_images") or [], ensure_ascii=False)
+    elif isinstance(ref_images, list):
+        ref_images = json.dumps(ref_images, ensure_ascii=False)
+    elif not ref_images:
+        ref_images = "[]"
+    ref_image = data.get("ref_image", "")
+    try:
+        imgs = json.loads(ref_images) if isinstance(ref_images, str) else ref_images
+        if imgs and isinstance(imgs[0], dict) and imgs[0].get("path"):
+            ref_image = ref_image or imgs[0]["path"]
+    except (json.JSONDecodeError, TypeError, IndexError):
+        pass
+    with db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO props (
+                id, project_id, episode_id, name, role_note, visual_prompt, ref_image,
+                ref_images_json, episodes_json, sort_order
+            )
+            VALUES (?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+              name=excluded.name, role_note=excluded.role_note, visual_prompt=excluded.visual_prompt,
+              ref_image=excluded.ref_image, episode_id=excluded.episode_id, sort_order=excluded.sort_order,
+              ref_images_json=excluded.ref_images_json, episodes_json=excluded.episodes_json
+            """,
+            (
+                pid,
+                project_id,
+                data.get("episode_id") or "",
+                data["name"],
+                data.get("role_note", ""),
+                data.get("visual_prompt", ""),
+                ref_image,
+                ref_images,
+                episodes_json,
+                int(data.get("sort_order", 0)),
+            ),
+        )
+        row = conn.execute("SELECT * FROM props WHERE id=?", (pid,)).fetchone()
+    return _normalize_prop(dict(row))
+
+
+def append_prop_ref_image(
+    project_id: str, prop_id: str, rel_path: str, label: str = "形象"
+) -> Dict[str, Any]:
+    prop = get_prop(project_id, prop_id)
+    images = list(prop.get("ref_images") or [])
+    images.append({"path": rel_path, "label": label or "形象"})
+    return upsert_prop(
+        project_id,
+        {
+            "id": prop_id,
+            "name": prop["name"],
+            "role_note": prop.get("role_note") or "",
+            "visual_prompt": prop.get("visual_prompt") or "",
+            "ref_image": rel_path,
+            "ref_images": images,
+            "episodes": prop.get("episodes") or [],
+            "sort_order": int(prop.get("sort_order") or 0),
+            "episode_id": prop.get("episode_id") or "",
+        },
+    )
 
 
 def list_episodes(project_id: str) -> List[Dict[str, Any]]:
@@ -533,10 +1027,188 @@ def _mp4_has_audio_stream(path: Path) -> bool:
         return False
 
 
+def _mp4_audio_is_hum_only(path: Path) -> bool:
+    """检测「只有电流/平坦底噪、没有对白起伏」的坏音轨（有 aac 但仍不可用）。
+
+    对白段音量会随时间明显起伏；电流声则多段窗口响度几乎不变。
+    """
+    path = Path(path)
+    if not path.is_file() or not _mp4_has_audio_stream(path):
+        return False
+    try:
+        dur_s = float(
+            subprocess.check_output(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "csv=p=0",
+                    str(path),
+                ],
+                stderr=subprocess.DEVNULL,
+                timeout=20,
+            )
+            .decode("utf-8", "replace")
+            .strip()
+            or "0"
+        )
+    except (subprocess.SubprocessError, OSError, ValueError):
+        return False
+    if dur_s < 2.0:
+        return False
+    means: List[float] = []
+    for frac in (0.12, 0.38, 0.62, 0.85):
+        ss = max(0.0, min(dur_s - 1.4, dur_s * frac))
+        try:
+            proc = subprocess.run(
+                [
+                    "ffmpeg",
+                    "-hide_banner",
+                    "-nostats",
+                    "-ss",
+                    f"{ss:.2f}",
+                    "-t",
+                    "1.3",
+                    "-i",
+                    str(path),
+                    "-af",
+                    "volumedetect",
+                    "-f",
+                    "null",
+                    "-",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=40,
+            )
+        except (subprocess.SubprocessError, OSError):
+            continue
+        for line in (proc.stderr or "").splitlines():
+            if "mean_volume:" in line:
+                try:
+                    means.append(
+                        float(line.split("mean_volume:")[1].split("dB")[0].strip())
+                    )
+                except (IndexError, ValueError):
+                    pass
+                break
+    if len(means) < 3:
+        return False
+    spread = max(means) - min(means)
+    avg = sum(means) / len(means)
+    # 多段响度几乎一样，且处于「听得见的嗡鸣」区间 → 判为电流声坏轨
+    return spread < 2.5 and -40.0 <= avg <= -12.0
+
+
+def _estimate_line_speech_sec(text: str) -> float:
+    """估算中文对白时长（偏保守，避免句尾被镜长截断）。"""
+    t = (text or "").strip()
+    if not t:
+        return 0.0
+    pause = 0.12 * (t.count("，") + t.count("、") + t.count("；") + t.count(","))
+    pause += 0.28 * (
+        t.count("。") + t.count("！") + t.count("？") + t.count("…") + t.count("?") + t.count("!")
+    )
+    # ~3 字/秒 + 气口；最短约 1.6s
+    return max(1.6, len(t) / 3.0 + pause + 0.4)
+
+
+def _min_duration_covering_voices(
+    voices: Any, current_dur: float, *, tail_sec: float = 1.25
+) -> float:
+    last_end = 0.0
+    if isinstance(voices, list):
+        for v in voices:
+            if not isinstance(v, dict):
+                continue
+            text = (v.get("text") or "").strip()
+            if len(text) < 1:
+                continue
+            try:
+                st = float(v.get("start_sec") or 0.8)
+            except (TypeError, ValueError):
+                st = 0.8
+            last_end = max(last_end, st + _estimate_line_speech_sec(text))
+    cur = max(2.0, float(current_dur or 5.0))
+    if last_end <= 0:
+        return cur
+    need = last_end + float(tail_sec)
+    if need <= cur + 0.05:
+        return cur
+    # 向上取整到 0.5 秒，最长 30s
+    import math
+
+    return min(30.0, math.ceil(need * 2.0) / 2.0)
+
+
+def ensure_shot_durations_cover_dialogue(
+    episode_id: str, shot_nums: Optional[List[int]] = None
+) -> List[Dict[str, Any]]:
+    """成片前拉长镜长，保证末句说完；写回 DB。返回调整明细。"""
+    ep = get_episode(episode_id)
+    want = {int(x) for x in shot_nums} if shot_nums else None
+    changed: List[Dict[str, Any]] = []
+    for s in ep.get("shots") or []:
+        sn = int(s["shot_num"])
+        if want is not None and sn not in want:
+            continue
+        voices = s.get("voices")
+        if voices is None:
+            try:
+                voices = json.loads(s.get("voices_json") or "[]")
+            except json.JSONDecodeError:
+                voices = []
+        old = float(s.get("duration_sec") or 5.0)
+        new = _min_duration_covering_voices(voices, old)
+        if new > old + 0.05:
+            with db.connect() as conn:
+                conn.execute(
+                    "UPDATE shots SET duration_sec=? WHERE episode_id=? AND shot_num=?",
+                    (new, episode_id, sn),
+                )
+            changed.append({"shot_num": sn, "from": old, "to": new})
+            print(
+                f"[duration] shot {sn}: {old:.1f}s -> {new:.1f}s (cover dialogue)",
+                flush=True,
+            )
+    return changed
+
+
+def _ensure_shot_audio_usable(
+    project_id: str,
+    episode_id: str,
+    shot_num: int,
+    mp4: Path,
+    *,
+    shot_label: str = "",
+) -> None:
+    """只接受 MiniMax/H3 原生音轨；禁止 Web TTS 混音盖轨。
+
+    无声或坏轨时直接报错，应检查脚本对白/环境声或重做分镜图后再生成。
+    """
+    label = shot_label or f"镜{shot_num}"
+    # 显式禁止任何 Web 侧补音（忽略旧环境变量）
+    _ = project_id, episode_id  # 保留签名兼容调用方
+    hum = _mp4_audio_is_hum_only(mp4)
+    silent = not _mp4_has_audio_stream(mp4)
+    if not silent and not hum:
+        return
+    kind = "电流声/平坦底噪" if hum else "无音轨"
+    raise RuntimeError(
+        f"{label} MiniMax 原生音轨异常（{kind}）。"
+        "已禁止 Web/TTS 混音。请检查该段脚本对白与分镜图是否合理，"
+        "必要时重做分镜图后再重跑该段视频。"
+    )
+
+
 def _push_muxed_shots_to_latest_comfy_ckpt(
     project_id: str, ep_num: int, shot_nums: List[int]
 ) -> None:
-    """把 Web 侧已混音的单镜 mp4 写回最新 Comfy ckpt，供 finalize_mux 拼接。"""
+    """（已停用）旧版把 Web 补音片写回 Comfy ckpt。"""
+    return
     ckpt_root = comfy_root() / "output" / "drama_ui" / "ckpt"
     if not ckpt_root.is_dir():
         return
@@ -621,6 +1293,59 @@ def _best_comfy_shot_mp4_dir(n_shots: int) -> Optional[Path]:
             best_mtime = newest
             best = mp4_dir
     return best
+
+
+def _import_shot_video_from_history(
+    history: Optional[Dict[str, Any]],
+    project_id: str,
+    ep_num: int,
+    shot_num: int,
+    *,
+    vid_prefix: str = "",
+) -> Optional[Path]:
+    """把单镜 Comfy SaveVideo 输出经 /view 拉到项目 episodes/…/shots/shot_XX.mp4。"""
+    dest = (
+        db.project_dir(project_id)
+        / "episodes"
+        / f"ep{int(ep_num):02d}"
+        / "shots"
+        / f"shot_{int(shot_num):02d}.mp4"
+    )
+    src: Optional[Path] = None
+    if history:
+        try:
+            _imgs, vids = resolve_output_files(history, client=ComfyClient())
+            if vids:
+                src = vids[0]
+        except Exception:
+            src = None
+    if (src is None or not src.is_file()) and vid_prefix:
+        src = find_newest_under(vid_prefix, ".mp4")
+    if src is None or not src.is_file():
+        # 云 GPU 镜像目录按 SaveVideo 编号落盘时的兜底
+        mirror = (
+            comfy_root()
+            / "output"
+            / "bingjing"
+            / project_id[:8]
+            / f"ep{int(ep_num):02d}"
+        )
+        if mirror.is_dir():
+            cands = sorted(
+                mirror.glob("final_*.mp4"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            # 优先按序号对齐镜号
+            numbered = mirror / f"final_{int(shot_num):05d}_.mp4"
+            if numbered.is_file():
+                src = numbered
+            elif cands:
+                src = cands[0]
+    if src is None or not src.is_file():
+        return None
+    copy_into_project(src, dest)
+    return dest
 
 
 def _import_shot_videos_from_comfy_ckpt(
@@ -744,11 +1469,14 @@ def get_episode(episode_id: str) -> Dict[str, Any]:
     pid = out["project_id"]
     ep_num = int(out["ep_num"])
     shot_list = [_normalize_shot_api(dict(s)) for s in shots]
-    ensure_episode_assets(pid, episode_id, ep_num, len(shot_list))
+    # 仅协调本项目磁盘文件；禁止在「读取分集」时从全局 Comfy ckpt / 其它项目拷贝媒体
+    from .asset_recovery import is_bingjing_project_id
+
+    if is_bingjing_project_id(pid):
+        ensure_episode_assets(pid, episode_id, ep_num, len(shot_list))
     out["shots"] = _reconcile_shot_images_from_disk(
         pid, episode_id, ep_num, shot_list
     )
-    _import_shot_videos_from_comfy_ckpt(pid, ep_num, len(out["shots"]))
     out["shots"] = _reconcile_shot_videos_from_disk(
         pid, episode_id, ep_num, out["shots"]
     )
@@ -761,21 +1489,17 @@ def get_episode(episode_id: str) -> Dict[str, Any]:
         )
     # 整段 Drama10 仅用于 Comfy 导出文件，不在集编辑窗底部重复展示
     out["drama10_prompt"] = ""
-    try:
-        from .drama10_export import load_episode as _load_ep_json
-        from .voice_cast import merge_voice_cast
+    from .voice_cast import normalize_cast
 
-        leg = _load_ep_json(ep_num)
-        prefs = get_generation_prefs(pid)
-        out["voice_cast"] = merge_voice_cast(
-            prefs.get("voice_cast"), leg.get("voice_cast")
-        )
-        out["character_bible"] = (leg.get("character_bible") or "").strip()
-    except (OSError, ValueError, TypeError):
-        from .voice_cast import voice_cast_from_prefs
-
-        out["voice_cast"] = voice_cast_from_prefs(get_generation_prefs(pid))
-        out["character_bible"] = ""
+    prefs = get_generation_prefs(pid)
+    vc = normalize_cast(prefs.get("voice_cast"))
+    out["voice_cast"] = vc
+    # 人物小传仅用本项目文档，绝不读共享 web/data/epXX.json（那是冰镜专用）
+    docs = get_project(pid).get("docs") or {}
+    out["character_bible"] = (
+        (docs.get("series_scripts_note") or "").strip()
+        or (prefs.get("global_memory") or "").strip()
+    )
     return out
 
 
@@ -828,8 +1552,10 @@ def replace_shots(episode_id: str, shots: List[Dict[str, Any]]) -> Dict[str, Any
     for s in shots:
         sn = int(s["shot_num"])
         prev = old_map.get(sn) or {}
+        # 新脚本若显式带 voices（含空列表）必须以新为准，勿回填旧对白——
+        # 否则重写脚本后仍会把旧的长台词塞进新段，语速被撑爆。
         voices_in = s.get("voices")
-        if voices_in is None or (isinstance(voices_in, list) and len(voices_in) == 0):
+        if voices_in is None:
             try:
                 voices_in = json.loads(prev.get("voices_json") or "[]")
             except json.JSONDecodeError:
@@ -840,12 +1566,27 @@ def replace_shots(episode_id: str, shots: List[Dict[str, Any]]) -> Dict[str, Any
                 for v in voices_in
                 if isinstance(v, dict)
             ]
+        new_visual = (s.get("visual") or "").strip()
+        old_visual = (prev.get("visual") or "").strip()
+        try:
+            old_voices = json.loads(prev.get("voices_json") or "[]")
+        except json.JSONDecodeError:
+            old_voices = []
+        new_voices = voices_in if isinstance(voices_in, list) else []
+        script_changed = (new_visual and old_visual and new_visual != old_visual) or (
+            json.dumps(new_voices, ensure_ascii=False)
+            != json.dumps(old_voices, ensure_ascii=False)
+        )
+        keep_video = s.get("video_path") or ""
+        if not keep_video:
+            # 脚本/台词变了则丢掉旧成片，避免画面与对白对不上
+            keep_video = "" if script_changed else (prev.get("video_path") or "")
         merged.append(
             compact_shot_record(
                 {
                     **s,
                     "image_path": s.get("image_path") or prev.get("image_path") or "",
-                    "video_path": s.get("video_path") or prev.get("video_path") or "",
+                    "video_path": keep_video,
                     "title": s.get("title") if s.get("title") is not None else prev.get("title") or "",
                     "scene": s.get("scene") if s.get("scene") is not None else prev.get("scene") or "",
                     "motion": s.get("motion") if s.get("motion") is not None else prev.get("motion") or "",
@@ -1054,16 +1795,9 @@ def sync_episode_production_assets_from_json(
         )
 
 
-def still_prompt_overrides_from_episode_json(ep_num: int) -> Dict[str, str]:
-    """读取分集 JSON 中每镜 still_prompt（供 API/Comfy 出图优先使用）。"""
-    from .drama10_export import load_episode
-
-    try:
-        leg = load_episode(int(ep_num))
-    except (OSError, ValueError, TypeError):
-        return {}
+def _still_prompts_from_legacy_dict(legacy: Dict[str, Any]) -> Dict[str, str]:
     out: Dict[str, str] = {}
-    for s in leg.get("shots") or []:
+    for s in legacy.get("shots") or []:
         if not isinstance(s, dict):
             continue
         sp = (s.get("still_prompt") or "").strip()
@@ -1073,6 +1807,44 @@ def still_prompt_overrides_from_episode_json(ep_num: int) -> Dict[str, str]:
         if sn:
             out[str(sn)] = sp
     return out
+
+
+def still_prompt_overrides_from_episode_json(ep_num: int) -> Dict[str, str]:
+    """兼容旧调用：仅读共享 web/data/epXX.json（冰镜专用）。"""
+    from .drama10_export import load_episode
+
+    try:
+        return _still_prompts_from_legacy_dict(load_episode(int(ep_num)))
+    except (OSError, ValueError, TypeError, FileNotFoundError):
+        return {}
+
+
+def still_prompt_overrides_for_project(project_id: str, ep_num: int) -> Dict[str, str]:
+    """按项目隔离读取 still_prompt，禁止非冰镜项目误用共享 epXX.json。"""
+    from .asset_recovery import is_bingjing_project_id
+
+    ep_num = int(ep_num)
+    candidates: List[Path] = [
+        db.project_dir(project_id) / "scripts" / f"ep{ep_num:02d}.json",
+    ]
+    # 压测短剧本地数据文件（未拷进 projects/scripts 时的回退）
+    if project_id == "gpu-vram-test-manhua":
+        candidates.append(db.WEB_ROOT / "data" / f"gpu_vram_test_ep{ep_num:02d}.json")
+    if is_bingjing_project_id(project_id):
+        candidates.append(db.WEB_ROOT / "data" / f"ep{ep_num:02d}.json")
+
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            legacy = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeError):
+            continue
+        if isinstance(legacy, dict):
+            out = _still_prompts_from_legacy_dict(legacy)
+            if out:
+                return out
+    return {}
 
 
 def _default_project_pipeline() -> Dict[str, str]:
@@ -1124,6 +1896,79 @@ def _job_still_running(jid: str) -> bool:
         return get_job(jid).get("status") == "running"
     except KeyError:
         return False
+
+
+def _parse_shot_scene_seg(shot: Optional[Dict[str, Any]], shot_num: int) -> tuple:
+    """从镜头 title（含「场N段M」）解析场号/段号。"""
+    title = ""
+    if isinstance(shot, dict):
+        title = str(shot.get("title") or "")
+    m = re.search(r"场\s*(\d+)\s*段\s*(\d+)", title)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    return 1, int(shot_num)
+
+
+def _segment_progress_label(
+    ep_num: int,
+    shot: Optional[Dict[str, Any]],
+    shot_num: int,
+    *,
+    index: int = 0,
+    total: int = 0,
+    prefix: str = "整集",
+) -> str:
+    scene_i, seg_i = _parse_shot_scene_seg(shot, shot_num)
+    base = f"{prefix}-第{int(ep_num)}集第{scene_i}场第{seg_i}段"
+    if total and total > 1:
+        return f"{base}（{int(index)}/{int(total)}）"
+    return base
+
+
+def cancel_job(job_id: str) -> Dict[str, Any]:
+    """用户停止：标记 cancelled，后台循环在下一检查点退出；已落盘段落保留。"""
+    job = get_job(job_id)
+    st = (job.get("status") or "").lower()
+    if st != "running":
+        raise ValueError(f"任务未在运行（当前：{st or '未知'}）")
+    prog = float(job.get("progress") or 0)
+    _job_update(
+        job_id,
+        "cancelled",
+        prog,
+        "已停止；已生成段落保留在工作台，可点「继续补全视频」接着做",
+    )
+    return get_job(job_id)
+
+
+def _job_mark_current_shot(
+    jid: str,
+    shot_num: int,
+    *,
+    ep_num: int,
+    shot: Optional[Dict[str, Any]] = None,
+    index: int = 0,
+    total: int = 0,
+    progress: float = 0.0,
+    phase: str = "视频生成中",
+) -> str:
+    """更新整集任务的当前段，供 UI 高亮与文案展示。"""
+    label = _segment_progress_label(
+        ep_num, shot, shot_num, index=index, total=total, prefix="整集"
+    )
+    msg = f"{label}{phase}"
+    _job_update(
+        jid,
+        "running",
+        progress,
+        msg,
+        patch_params={
+            "current_shot_num": int(shot_num),
+            "segment_serial": True,
+            "current_label": label,
+        },
+    )
+    return label
 
 
 def recover_jobs_on_startup() -> None:
@@ -1236,7 +2081,7 @@ def _auto_resume_failed_video_jobs() -> None:
                 GROUP BY episode_id
             ) t ON j.episode_id=t.episode_id AND j.created_at=t.mx
             WHERE j.status='failed' AND j.stage_id='video'
-              AND j.updated_at >= datetime('now', '-8 hours')
+              AND j.updated_at >= strftime('%Y-%m-%dT%H:%M:%S', 'now', '+8 hours', '-8 hours')
             """
         ).fetchall()
     for row in rows:
@@ -1605,6 +2450,24 @@ def _shot_still_png_path(project_id: str, ep_num: int, shot_num: int) -> Path:
     )
 
 
+def _shot_video_mp4_path(project_id: str, ep_num: int, shot_num: int) -> Path:
+    ep_tag = f"ep{int(ep_num):02d}"
+    return (
+        db.project_dir(project_id)
+        / "episodes"
+        / ep_tag
+        / "shots"
+        / f"shot_{int(shot_num):02d}.mp4"
+    )
+
+
+def _shot_asset_ready(path: Path, *, min_bytes: int = 256) -> bool:
+    try:
+        return path.is_file() and path.stat().st_size >= min_bytes
+    except OSError:
+        return False
+
+
 def _assert_shot_stills_for_video(
     project_id: str,
     episode_id: str,
@@ -1628,8 +2491,9 @@ def _assert_shot_stills_for_video(
     missing = [sn for sn in want if not _shot_still_png_path(project_id, ep_num, sn).is_file()]
     if missing:
         raise ValueError(
-            f"镜 {missing} 还没有分镜图（shot_XX.png）。"
-            "请先在镜头表点「生成此镜分镜图」，确认图片满意后再点「图生视频」。"
+            f"镜 {missing} 还没有分镜图。"
+            "整集重新推理后段数可能变多，请先点「生成分镜图」或「批量补缺分镜图」，"
+            "确认图片后再生成视频。"
         )
 
 
@@ -1657,12 +2521,45 @@ def start_job(
                 "整集成片需 confirm_full_episode=true；单镜请传 shot_nums"
             )
     if stage_id == "video" and episode_id and not _allow_server_batch_jobs():
-        _assert_shot_stills_for_video(
-            project_id,
-            episode_id,
-            shot_nums=[int(x) for x in shot_nums] if shot_nums else None,
-            mux_only=bool(params.get("mux_only")),
-        )
+        if params.get("mux_only"):
+            pass
+        elif shot_nums:
+            _assert_shot_stills_for_video(
+                project_id,
+                episode_id,
+                shot_nums=[int(x) for x in shot_nums],
+                mux_only=False,
+            )
+        elif (
+            bool(params.get("skip_existing", True))
+            and not bool(params.get("fresh_video"))
+            and not params.get("rerun_shot_nums")
+            and not params.get("rerun_shots")
+        ):
+            # 批量补缺：只检查「还缺视频」的镜是否已有分镜图
+            ep0 = get_episode(episode_id)
+            ep_num0 = int(ep0["ep_num"])
+            need_stills: List[int] = []
+            for s in ep0.get("shots") or []:
+                sn = int(s["shot_num"])
+                if _is_black_shot((s.get("visual") or "")):
+                    continue
+                if not _shot_asset_ready(_shot_video_mp4_path(project_id, ep_num0, sn)):
+                    need_stills.append(sn)
+            if need_stills:
+                _assert_shot_stills_for_video(
+                    project_id,
+                    episode_id,
+                    shot_nums=need_stills,
+                    mux_only=False,
+                )
+        else:
+            _assert_shot_stills_for_video(
+                project_id,
+                episode_id,
+                shot_nums=None,
+                mux_only=False,
+            )
     jid = str(uuid.uuid4())
     now = db._utcnow()
     msg = "排队中"
@@ -1673,20 +2570,21 @@ def start_job(
         if stage_id in ("storyboard_images", "video"):
             if not (episode_id or "").strip():
                 raise ValueError("分镜出图/成片需指定集数")
+            # 同阶段互斥；出图与出视频可并行（分镜图生成后可边看边跑视频）
             busy = conn.execute(
                 """
                 SELECT id, stage_id FROM jobs
                 WHERE status='running'
-                  AND stage_id IN ('storyboard_images','video')
+                  AND stage_id=?
                   AND episode_id=?
                 LIMIT 1
                 """,
-                (episode_id,),
+                (stage_id, episode_id),
             ).fetchone()
             if busy:
-                other = "分镜出图" if busy["stage_id"] == "storyboard_images" else "成片"
+                label = "分镜出图" if stage_id == "storyboard_images" else "成片/图生视频"
                 raise RuntimeError(
-                    f"本集已有{other}任务在跑，请等其完成后再提交（其他集可并行）"
+                    f"本集已有{label}任务在跑，请等其完成后再提交同类型任务（出图与出视频可同时进行）"
                 )
         conn.execute(
             """
@@ -1724,12 +2622,56 @@ def get_job(job_id: str) -> Dict[str, Any]:
     return dict(row)
 
 
-def _job_update(jid: str, status: str, progress: float, message: str) -> None:
+def _job_update(
+    jid: str,
+    status: str,
+    progress: float,
+    message: str,
+    *,
+    patch_params: Optional[Dict[str, Any]] = None,
+) -> None:
+    now = db._utcnow()
     with db.connect() as conn:
-        conn.execute(
-            "UPDATE jobs SET status=?, progress=?, message=?, updated_at=? WHERE id=?",
-            (status, progress, message, db._utcnow(), jid),
-        )
+        if patch_params:
+            row = conn.execute(
+                "SELECT params_json, status FROM jobs WHERE id=?", (jid,)
+            ).fetchone()
+            if not row:
+                return
+            # 用户已停止则不再被后台进度覆盖成 running
+            if (row["status"] or "") == "cancelled" and status == "running":
+                return
+            try:
+                params = json.loads(row["params_json"] or "{}")
+            except json.JSONDecodeError:
+                params = {}
+            if not isinstance(params, dict):
+                params = {}
+            params.update(patch_params)
+            conn.execute(
+                """
+                UPDATE jobs SET status=?, progress=?, message=?, updated_at=?, params_json=?
+                WHERE id=?
+                """,
+                (
+                    status,
+                    progress,
+                    message,
+                    now,
+                    json.dumps(params, ensure_ascii=False),
+                    jid,
+                ),
+            )
+        else:
+            row = conn.execute(
+                "SELECT status FROM jobs WHERE id=?", (jid,)
+            ).fetchone()
+            if row and (row["status"] or "") == "cancelled" and status == "running":
+                return
+            conn.execute(
+                "UPDATE jobs SET status=?, progress=?, message=?, updated_at=? WHERE id=?",
+                (status, progress, message, now, jid),
+            )
 
 
 def _run_job(
@@ -1759,17 +2701,119 @@ def _run_job(
                     jid,
                     "running",
                     0.05,
-                    f"开始 · 单镜 {sn}（非整集成片）",
+                    f"开始 · 单段视频 {sn}",
                 )
             else:
-                _job_update(jid, "running", 0.05, "开始 · 整集成片")
+                _job_update(
+                    jid,
+                    "running",
+                    0.05,
+                    "整集任务已排队 · 将按场/段依次生成",
+                    patch_params={"segment_serial": True},
+                )
             _job_episode_video(jid, project_id, episode_id, vparams)
         else:
             raise ValueError(f"未知或未支持的阶段：{stage_id}")
     except Exception as e:
+        try:
+            if get_job(jid).get("status") == "cancelled":
+                return
+        except KeyError:
+            pass
         _job_update(jid, "failed", 0, str(e))
         if stage_id == "video" and episode_id:
             _maybe_auto_resume_video_after_fail(project_id, episode_id, e)
+
+
+def _enrich_voices_from_assets(
+    project_id: str, voices: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """把资产库音色/外形挂到对白行，供 Drama10 / TTS 一致引用。"""
+    if not voices:
+        return []
+    by_name = {
+        (c.get("name") or "").strip(): c for c in list_characters(project_id) if c.get("name")
+    }
+    out: List[Dict[str, Any]] = []
+    for v in voices:
+        if not isinstance(v, dict):
+            continue
+        item = dict(v)
+        role = (item.get("role") or "").strip()
+        ch = by_name.get(role)
+        if ch:
+            if not (item.get("voice_desc") or "").strip():
+                item["voice_desc"] = (ch.get("voice_desc") or "").strip()
+            if not (item.get("tts_voice") or "").strip():
+                item["tts_voice"] = (ch.get("tts_voice") or "").strip()
+            item["asset_visual"] = (ch.get("visual_prompt") or "").strip()[:220]
+        out.append(item)
+    return out
+
+
+def _asset_lock_bible(project_id: str, shots: List[Dict[str, Any]]) -> str:
+    """从镜头画面/对白中解析出现的人物/场景/道具，拼资产库锁定块。"""
+    blob_parts: List[str] = []
+    for s in shots:
+        blob_parts.append(str(s.get("visual") or ""))
+        blob_parts.append(str(s.get("scene") or ""))
+        blob_parts.append(str(s.get("title") or ""))
+        for v in s.get("voices") or []:
+            if isinstance(v, dict):
+                blob_parts.append(str(v.get("role") or ""))
+                blob_parts.append(str(v.get("text") or ""))
+    blob = "\n".join(blob_parts)
+    lines: List[str] = []
+    char_lines: List[str] = []
+    for c in list_characters(project_id):
+        name = (c.get("name") or "").strip()
+        if not name or (name not in blob and f"@{name}" not in blob):
+            continue
+        vp = (c.get("visual_prompt") or "").strip().replace("\n", " ")[:220]
+        vd = (c.get("voice_desc") or "").strip().replace("\n", " ")[:100]
+        tv = (c.get("tts_voice") or "").strip()
+        bit = f"@{name}"
+        if vp:
+            bit += f"：外形 {vp}"
+        if vd:
+            bit += f"；音色 {vd}"
+        if tv:
+            bit += f"；TTS:{tv}"
+        char_lines.append(bit)
+    if char_lines:
+        lines.append("【资产库锁定·人物】必须与下列外形/音色一致，禁止换脸换声：")
+        lines.extend(char_lines[:16])
+    scene_lines: List[str] = []
+    for sc in list_scenes(project_id):
+        name = (sc.get("name") or "").strip()
+        code = (sc.get("code") or "").strip()
+        keys = [x for x in (name, code) if x]
+        if not keys or not any(k in blob or f"@{k}" in blob for k in keys):
+            # 母版名常见于 @偏院室内母版
+            vp0 = (sc.get("visual_prompt") or "").strip()
+            if not any(f"@{k}" in blob for k in keys):
+                if name and name not in blob and (not code or code not in blob):
+                    continue
+        tag = name or code
+        vp = (sc.get("visual_prompt") or sc.get("role_note") or "").strip().replace("\n", " ")[:220]
+        if tag and vp:
+            scene_lines.append(f"@{tag}：{vp}")
+        elif tag:
+            scene_lines.append(f"@{tag}")
+    if scene_lines:
+        lines.append("【资产库锁定·场景】空间母版与陈设必须一致：")
+        lines.extend(scene_lines[:10])
+    prop_lines: List[str] = []
+    for p in list_props(project_id):
+        name = (p.get("name") or "").strip()
+        if not name or (name not in blob and f"@{name}" not in blob):
+            continue
+        vp = (p.get("visual_prompt") or p.get("role_note") or "").strip().replace("\n", " ")[:160]
+        prop_lines.append(f"@{name}：{vp}" if vp else f"@{name}")
+    if prop_lines:
+        lines.append("【资产库锁定·道具】外形必须一致：")
+        lines.extend(prop_lines[:12])
+    return "\n".join(lines).strip()
 
 
 def _build_drama10_prompt(
@@ -1790,13 +2834,28 @@ def _build_drama10_prompt(
         "style_prefix": proj_style,
         "shots": [],
     }
-    leg_ep: Dict[str, Any] = {}
-    try:
-        from .drama10_export import load_episode as _load_ep_json
+    from .asset_recovery import is_bingjing_project_id
 
-        leg_ep = _load_ep_json(int(ep["ep_num"]))
-    except (OSError, ValueError, TypeError):
-        leg_ep = {}
+    leg_ep: Dict[str, Any] = {}
+    # 仅冰镜可读共享 web/data/epXX.json；其它短剧只用本项目字段，避免串戏
+    if is_bingjing_project_id(project_id):
+        try:
+            from .drama10_export import load_episode as _load_ep_json
+
+            leg_ep = _load_ep_json(int(ep["ep_num"]))
+        except (OSError, ValueError, TypeError, FileNotFoundError):
+            leg_ep = {}
+    else:
+        script_path = (
+            db.project_dir(project_id) / "scripts" / f"ep{int(ep['ep_num']):02d}.json"
+        )
+        if script_path.is_file():
+            try:
+                raw = json.loads(script_path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    leg_ep = raw
+            except (OSError, json.JSONDecodeError, UnicodeError):
+                leg_ep = {}
     for s in ep.get("shots") or []:
         sn = int(s["shot_num"])
         if s.get("voices") is not None:
@@ -1808,6 +2867,7 @@ def _build_drama10_prompt(
                 voices = []
         vis_raw = s.get("visual") or ""
         est = _is_establishing_shot(vis_raw)
+        voices = _enrich_voices_from_assets(project_id, list(voices or []))
         payload["shots"].append(
             {
                 "id": sn,
@@ -1824,8 +2884,20 @@ def _build_drama10_prompt(
                 "continuity": (s.get("continuity") or "").strip(),
             }
         )
+    docs = proj.get("docs") or {}
     payload["synopsis"] = (leg_ep.get("synopsis") or "").strip()
-    payload["character_bible"] = (leg_ep.get("character_bible") or "").strip()
+    asset_bible = _asset_lock_bible(project_id, payload["shots"])
+    legacy_bible = (
+        (leg_ep.get("character_bible") or "").strip()
+        or (docs.get("series_scripts_note") or "").strip()
+        or (prefs.get("global_memory") or "").strip()
+    )
+    if asset_bible and legacy_bible and legacy_bible not in ("SCRIPTSET 导入",):
+        payload["character_bible"] = asset_bible + "\n" + legacy_bible[:800]
+    elif asset_bible:
+        payload["character_bible"] = asset_bible
+    else:
+        payload["character_bible"] = legacy_bible
     payload["visual_style"] = (
         leg_ep.get("visual_style") or leg_ep.get("style_prefix") or proj_style
     ).strip()
@@ -1876,10 +2948,11 @@ def reprocess_episode_storyboard_tiles(project_id: str, episode_id: str) -> Dict
     """对已有单镜分镜图重新套用方向校正（无需重跑 Comfy）。"""
     ep = get_episode(episode_id)
     proj = get_project(project_id)
+    prefs = get_generation_prefs(project_id)
     n = len(ep.get("shots") or [])
     if n < 1:
         raise ValueError("本集无镜头")
-    w, h = int(proj["width"]), int(proj["height"])
+    w, h = resolve_still_canvas(proj, prefs)
     reprocess_storyboard_episode(project_id, int(ep["ep_num"]), n, w, h)
     return {"ep_num": ep["ep_num"], "shots": n, "rotate_deg": storyboard_tile_rotate_degrees()}
 
@@ -1889,7 +2962,8 @@ def fix_episode_shot_orientation(
 ) -> Dict[str, Any]:
     ep = get_episode(episode_id)
     proj = get_project(project_id)
-    w, h = int(proj["width"]), int(proj["height"])
+    prefs = get_generation_prefs(project_id)
+    w, h = resolve_still_canvas(proj, prefs)
     ep_tag = f"ep{ep['ep_num']:02d}"
     shots_dir = db.project_dir(project_id) / "episodes" / ep_tag / "shots"
     nums = [int(shot_num)] if shot_num else [int(s["shot_num"]) for s in ep.get("shots") or []]
@@ -1951,23 +3025,81 @@ def _job_drama10_export(jid: str, project_id: str, episode_id: str) -> None:
     )
 
 
+def _fmt_job_clock(seconds: float) -> str:
+    """与 Comfy tqdm 类似的 mm:ss（超过 1 小时用 h:mm:ss）。"""
+    s = int(max(0, float(seconds or 0)))
+    h, rem = divmod(s, 3600)
+    m, sec = divmod(rem, 60)
+    if h:
+        return f"{h}:{m:02d}:{sec:02d}"
+    return f"{m:02d}:{sec:02d}"
+
+
 def _comfy_wait_tick(
     jid: str, base_progress: float, span: float, phase: str = ""
 ):
-    """Comfy wait 轮询时更新进度；phase 保留「第几镜 / 拼接」等阶段文案。"""
+    """Comfy wait 轮询时更新进度；优先展示 Comfy 日志 tqdm 剩余时长。"""
 
     def _tick(elapsed: float, q: Dict[str, Any]) -> None:
-        bump = min(span * 0.85, elapsed / 600.0 * span)
+        step = int(q.get("step") or 0)
+        steps = int(q.get("steps") or 0)
+        if steps > 0:
+            bump = span * (0.08 + 0.77 * min(1.0, step / float(steps)))
+        else:
+            bump = min(span * 0.85, elapsed / 600.0 * span)
         run_q = int(q.get("running") or 0)
         pend_q = int(q.get("pending") or 0)
-        elapsed_s = int(elapsed)
-        if phase:
-            msg = f"{phase} · 进行中 {elapsed_s}s"
+        head = phase or "ComfyUI 处理中"
+        parts = [head, f"已用 {_fmt_job_clock(elapsed)}"]
+
+        eta: Optional[float] = None
+        eta_source = (q.get("eta_source") or "").strip()
+        # 1) Comfy 日志 tqdm：2/6 [02:53<05:47, …]
+        log_eta = q.get("log_eta_s")
+        if log_eta is None and eta_source == "comfy_log":
+            log_eta = q.get("eta_s")
+        if log_eta is not None:
+            try:
+                eta = max(0.0, float(log_eta))
+                eta_source = "comfy_log"
+            except (TypeError, ValueError):
+                eta = None
+        # 2) WebSocket 步时估算
+        if eta is None:
+            raw_eta = q.get("eta_s")
+            if raw_eta is not None:
+                try:
+                    eta = max(0.0, float(raw_eta))
+                    eta_source = eta_source or "ws"
+                except (TypeError, ValueError):
+                    eta = None
+        # 3) 本地步数推算 / 经验兜底（仅无日志时）
+        if eta is None and steps > 0 and step > 0:
+            eta = max(0.0, (steps - step) * (elapsed / float(step)))
+            eta_source = "steps"
+        if eta is None:
+            typical = float(os.environ.get("DRAMA10_SHOT_ETA_SEC", "520") or 520)
+            typical = max(120.0, min(2400.0, typical))
+            eta = max(15.0, typical - float(elapsed))
+            if pend_q > 0:
+                eta += typical * 0.45 * min(3, pend_q)
+            eta_source = "estimate"
+
+        raw_remain = (q.get("log_remain") or "").strip()
+        if eta_source == "comfy_log":
+            # 与终端一致：优先原样显示日志里的 <剩余>
+            clock = raw_remain if re.fullmatch(r"\d{1,2}:\d{2}(?::\d{2})?", raw_remain) else _fmt_job_clock(eta)
+            parts.append(f"Comfy剩余 {clock}")
         else:
-            msg = f"ComfyUI 处理中 · {elapsed_s}s"
+            parts.append(f"剩余约 {_fmt_job_clock(eta)}")
+
+        if steps > 0:
+            pct = int(q.get("step_pct") or int(100 * step / steps))
+            label = "Comfy采样" if eta_source == "comfy_log" else "采样"
+            parts.append(f"{label} {step}/{steps}（{pct}%）")
         if run_q or pend_q:
-            msg += f" · 队列 执行={run_q} 等待={pend_q}"
-        _job_update(jid, "running", base_progress + bump, msg)
+            parts.append(f"队列 执行={run_q} 等待={pend_q}")
+        _job_update(jid, "running", base_progress + bump, " · ".join(parts))
 
     return _tick
 
@@ -2011,8 +3143,8 @@ def _job_storyboard_images(
     shots_dir = ep_dir / "shots"
     shots_dir.mkdir(parents=True, exist_ok=True)
     proj_base = db.project_dir(project_id)
-    w, h = int(proj["width"]), int(proj["height"])
     prefs = get_generation_prefs(project_id)
+    w, h = resolve_still_canvas(proj, prefs)
     sb_backend = resolve_storyboard_backend(prefs)
     if (params.get("storyboard_backend") or "").strip() in (
         BACKEND_MINIMAX,
@@ -2020,6 +3152,13 @@ def _job_storyboard_images(
         BACKEND_IMAGE_API,
     ):
         sb_backend = str(params["storyboard_backend"]).strip()
+    # 配置了 API 出图但未存 Key 时，禁止静默回退到已断开的 Comfy（否则只显示 timed out）
+    wanted = (prefs.get("storyboard_backend") or params.get("storyboard_backend") or "").strip()
+    if wanted == BACKEND_IMAGE_API and not image_api_configured():
+        raise RuntimeError(
+            "分镜引擎为「第三方 API」，但未配置 OhMyGPT Key。"
+            "请在「全局制作 → OhMyGPT 密钥」保存后重试（勿依赖已断开的本机 Comfy）。"
+        )
     sb_negative = _storyboard_negative_prompt(project_id)
     skip_h3_rotate = sb_backend in (BACKEND_SDXL, BACKEND_IMAGE_API)
 
@@ -2084,7 +3223,7 @@ def _job_storyboard_images(
             hist = client.wait_prompt(
                 pid, timeout=7200.0, on_tick=_comfy_wait_tick(jid, base_p, 0.06)
             )
-            imgs, _ = resolve_output_files(hist)
+            imgs, _ = resolve_output_files(hist, client=client)
             src = pick_first_saved_still(imgs) or find_newest_under(prefix, ".png")
             if src is None or not src.is_file():
                 raise FileNotFoundError(f"镜{sn} 无 ComfyUI 输出")
@@ -2123,7 +3262,7 @@ def _job_storyboard_images(
                 jid,
                 "running",
                 base_p,
-                f"API 出图 {model} · 镜{sn}（{idx + 1}/{len(nums)}）…",
+                f"API 出图 {model} · 镜{sn}（{idx + 1}/{len(nums)}）· 等待上游返回…",
             )
             shot_neg = _storyboard_negative_prompt(project_id, vis_raw)
             if _is_establishing_shot(vis_raw):
@@ -2134,36 +3273,86 @@ def _job_storyboard_images(
             if _is_black_shot(still_prompt) or _is_black_shot(vis_raw):
                 tmp = _black_still_temp()
             else:
-                tmp = generate_still_via_api_temp(
-                    still_prompt,
-                    shot_neg,
-                    w,
-                    h,
-                    model=model,
-                )
+                try:
+                    tmp = generate_still_via_api_temp(
+                        still_prompt,
+                        shot_neg,
+                        w,
+                        h,
+                        model=model,
+                    )
+                except Exception as exc:
+                    raise RuntimeError(f"镜{sn} 出图失败：{exc}") from exc
             try:
                 _save_one_shot_png(tmp, sn)
             finally:
                 tmp.unlink(missing_ok=True)
+            # 每镜落盘后立刻抬进度，前端轮询即可看到缩略图（不必等整集）
+            done_p = 0.15 + ((idx + 1) / max(len(nums), 1)) * 0.75
+            _job_update(
+                jid,
+                "running",
+                min(0.92, done_p),
+                f"已完成镜{sn}（{idx + 1}/{len(nums)}），继续下一镜…",
+            )
 
     still_overrides = dict(params.get("still_prompts") or {})
-    for k, v in still_prompt_overrides_from_episode_json(int(ep["ep_num"])).items():
+    for k, v in still_prompt_overrides_for_project(project_id, int(ep["ep_num"])).items():
         still_overrides.setdefault(str(k), v)
+
+    ep_num_i = int(ep["ep_num"])
+    # 整集批量默认跳过已有 PNG；单镜 shot_nums / fresh_images 强制重出
+    skip_existing_stills = (
+        not shot_nums
+        and not bool(params.get("fresh_images"))
+        and bool(params.get("skip_existing", True))
+    )
+    if shot_nums:
+        target_nums = list(shot_nums)
+    else:
+        target_nums = [int(s["shot_num"]) for s in shots]
+        if skip_existing_stills:
+            missing = [
+                sn
+                for sn in target_nums
+                if not _shot_asset_ready(_shot_still_png_path(project_id, ep_num_i, sn))
+            ]
+            skipped = [sn for sn in target_nums if sn not in missing]
+            if skipped:
+                _job_update(
+                    jid,
+                    "running",
+                    0.08,
+                    f"已有分镜图跳过：镜 {skipped}；待补 {len(missing)} 镜",
+                )
+            if not missing:
+                try:
+                    pl = json.loads(ep.get("pipeline_json") or "{}")
+                except json.JSONDecodeError:
+                    pl = _default_episode_pipeline()
+                pl["storyboard_images"] = "done"
+                update_episode(episode_id, pipeline_json=pl)
+                _job_update(
+                    jid,
+                    "done",
+                    1.0,
+                    f"全部 {n} 镜分镜图已存在，已跳过出图",
+                )
+                return
+            target_nums = missing
 
     if sb_backend == BACKEND_IMAGE_API:
         if shot_nums:
             _job_update(jid, "running", 0.12, f"单镜重生成：{shot_nums}（API）")
             _apply_shot_regen_overrides(episode_id, params)
-            _api_generate_stills(shot_nums, still_overrides)
         else:
-            all_nums = [int(s["shot_num"]) for s in shots]
             _job_update(
                 jid,
                 "running",
                 0.12,
-                f"整集分镜 · 逐镜 API（共 {n} 镜）…",
+                f"批量补缺分镜图 · API（待出 {len(target_nums)}/{n} 镜）…",
             )
-            _api_generate_stills(all_nums, still_overrides)
+        _api_generate_stills(target_nums, still_overrides)
     else:
         with COMFY_QUEUE_LOCK:
             client = ComfyClient()
@@ -2171,25 +3360,14 @@ def _job_storyboard_images(
             if shot_nums:
                 _job_update(jid, "running", 0.12, f"单镜重生成：{shot_nums}（{sb_backend}）")
                 _apply_shot_regen_overrides(episode_id, params)
-                _comfy_generate_stills(shot_nums, still_overrides)
-            elif sb_backend == BACKEND_SDXL:
-                all_nums = [int(s["shot_num"]) for s in shots]
-                _job_update(
-                    jid,
-                    "running",
-                    0.12,
-                    f"整集分镜 · 逐镜 SDXL（共 {n} 镜，无 H3 拼图）…",
-                )
-                _comfy_generate_stills(all_nums, still_overrides)
             else:
-                all_nums = [int(s["shot_num"]) for s in shots]
                 _job_update(
                     jid,
                     "running",
                     0.12,
-                    f"整集分镜 · 逐镜 MiniMax H3（共 {n} 镜）…",
+                    f"批量补缺分镜图 · {sb_backend}（待出 {len(target_nums)}/{n} 镜）…",
                 )
-                _comfy_generate_stills(all_nums, still_overrides)
+            _comfy_generate_stills(target_nums, still_overrides)
 
     try:
         pl = json.loads(ep.get("pipeline_json") or "{}")
@@ -2206,7 +3384,12 @@ def _job_storyboard_images(
     if shot_nums:
         _job_update(jid, "done", 1.0, f"已重生成镜头 {shot_nums}")
     else:
-        _job_update(jid, "done", 1.0, f"分镜出图完成（{n} 镜，含方向校正）")
+        _job_update(
+            jid,
+            "done",
+            1.0,
+            f"分镜出图完成（新出 {len(target_nums)} 镜 / 共 {n} 镜）",
+        )
 
 
 MAX_VIDEO_COMFY_ATTEMPTS = 12
@@ -2360,23 +3543,37 @@ def _purge_comfy_drama_ckpt_cache() -> int:
 def _sync_episode_shot_stills_to_comfy(
     project_id: str, ep_tag: str, n_shots: int
 ) -> Optional[str]:
-    """将 project/episodes/…/shots/shot_XX.png 同步到 Comfy input，供 Drama10 逐镜 i2v。"""
+    """将 project/episodes/…/shots/shot_XX.png 同步到 Comfy input，供 Drama10 逐镜 i2v。
+
+    本机 Comfy：直接写 COMFYUI_ROOT/input；云 GPU（隧道）额外走 /upload/image。
+    """
     shots_dir = db.project_dir(project_id) / "episodes" / ep_tag / "shots"
     subdir = f"bingjing/{project_id[:8]}_{ep_tag}_shots"
     dest = comfy_root() / "input" / subdir
     dest.mkdir(parents=True, exist_ok=True)
     synced = 0
+    client: Optional[ComfyClient] = None
     for i in range(1, max(n_shots, 1) + 1):
         src = shots_dir / f"shot_{i:02d}.png"
         if not src.is_file():
             continue
         dst = dest / f"shot_{i:02d}.png"
-        if (
+        need_write = (
             not dst.is_file()
             or src.stat().st_size != dst.stat().st_size
             or int(src.stat().st_mtime) > int(dst.stat().st_mtime) + 1
-        ):
+        )
+        if need_write:
             dst.write_bytes(src.read_bytes())
+        # 远端 Comfy 没有共享磁盘时，始终上传（overwrite）保证 H3 input 有图
+        try:
+            if client is None:
+                client = ComfyClient()
+            client.upload_image(src, subfolder=subdir, overwrite=True, image_type="input")
+        except Exception as exc:
+            # 本机 Comfy 已落盘时允许上传失败；纯远端时后面会因缺图失败
+            if not dst.is_file():
+                raise RuntimeError(f"同步分镜到 Comfy 失败 shot_{i:02d}: {exc}") from exc
         synced += 1
     return subdir if synced else None
 
@@ -2435,9 +3632,10 @@ def _comfy_episode_video_pass(
                     f"{label} · 连接 Comfy（{attempt}/{MAX_VIDEO_COMFY_ATTEMPTS}）…",
                 )
                 client = _wait_comfy_ready(wait_cap)
-                preview_audio = params.get("preview_with_audio")
-                if preview_audio is None and single_shot_index > 0 and not finalize_mux:
-                    preview_audio = True
+                # 一律要求 Drama10 H3 原生音轨，禁止静音预览
+                preview_audio = True
+                if "preview_with_audio" in params:
+                    preview_audio = bool(params.get("preview_with_audio"))
                 graph = build_episode_video_workflow(
                     prompt,
                     vid_w,
@@ -2490,6 +3688,343 @@ def _comfy_episode_video_pass(
     raise RuntimeError(f"{label} 未获得 ComfyUI 输出")
 
 
+def _strip_mp4_audio_inplace(mp4: Path) -> None:
+    """去掉 mp4 音轨（官方 H3「仅无声画面」）。"""
+    mp4 = Path(mp4)
+    if not mp4.is_file():
+        return
+    tmp = mp4.with_suffix(".mute.tmp.mp4")
+    try:
+        subprocess.check_call(
+            [
+                "ffmpeg",
+                "-y",
+                "-loglevel",
+                "error",
+                "-i",
+                str(mp4),
+                "-an",
+                "-c:v",
+                "copy",
+                "-movflags",
+                "+faststart",
+                str(tmp),
+            ],
+            timeout=120,
+        )
+        if tmp.is_file() and tmp.stat().st_size > 256:
+            tmp.replace(mp4)
+        else:
+            tmp.unlink(missing_ok=True)
+    except (subprocess.SubprocessError, OSError) as e:
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(f"去除音轨失败：{e}") from e
+
+
+def _ffmpeg_concat_shot_mp4s(clips: List[Path], out_mp4: Path) -> None:
+    """无损拼接单镜 mp4 → 整集成片。"""
+    out_mp4 = Path(out_mp4)
+    out_mp4.parent.mkdir(parents=True, exist_ok=True)
+    lst = out_mp4.parent / f".concat_{out_mp4.stem}.txt"
+    with lst.open("w", encoding="utf-8") as f:
+        for c in clips:
+            # ffmpeg concat demuxer：单引号路径
+            p = str(Path(c).resolve()).replace("'", "'\\''")
+            f.write(f"file '{p}'\n")
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        str(lst),
+        "-c",
+        "copy",
+        str(out_mp4),
+    ]
+    subprocess.check_call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    try:
+        lst.unlink(missing_ok=True)  # type: ignore[call-arg]
+    except TypeError:
+        if lst.is_file():
+            lst.unlink()
+
+
+def _job_episode_video_minimax(
+    jid: str,
+    project_id: str,
+    episode_id: str,
+    job_params: Optional[Dict[str, Any]] = None,
+) -> None:
+    """官方 MiniMax H3：逐镜图生视频 → 拼接成片（音轨由 H3 原生带出）。"""
+    from . import minimax_official as mm
+
+    if not _job_still_running(jid):
+        return
+    job_params = job_params or {}
+    if not mm.ready():
+        raise RuntimeError(
+            "未配置 MiniMax API Key。请在「全局制作 → 视频生成后端」选择官方 API 并保存密钥。"
+        )
+
+    ep = get_episode(episode_id)
+    shots = ep.get("shots") or []
+    ep_num = int(ep["ep_num"])
+    ep_tag = f"ep{ep_num:02d}"
+    ep_dir = db.project_dir(project_id) / "episodes" / ep_tag
+    shots_dir = ep_dir / "shots"
+    mux_only = bool(job_params.get("mux_only"))
+
+    only_shots: Optional[List[int]] = None
+    _raw_sn = job_params.get("shot_nums")
+    if _raw_sn:
+        only_shots = sorted({int(x) for x in _raw_sn})
+
+    video_shot_nums = [
+        int(s["shot_num"])
+        for s in shots
+        if not _is_black_shot((s.get("visual") or ""))
+    ]
+    if not video_shot_nums:
+        video_shot_nums = [int(s["shot_num"]) for s in shots]
+    if only_shots:
+        filtered = [sn for sn in video_shot_nums if sn in only_shots]
+        video_shot_nums = filtered if filtered else list(only_shots)
+
+    rerun_raw = job_params.get("rerun_shot_nums") or job_params.get("rerun_shots")
+    if rerun_raw and not mux_only:
+        video_shot_nums = sorted({int(x) for x in rerun_raw})
+
+    # 整集批量默认跳过已有 mp4；单镜 / fresh_video / rerun 强制重出
+    skip_existing_videos = (
+        not mux_only
+        and not only_shots
+        and not rerun_raw
+        and not bool(job_params.get("fresh_video"))
+        and bool(job_params.get("skip_existing", True))
+    )
+    generate_nums = list(video_shot_nums)
+    if skip_existing_videos:
+        missing = [
+            sn
+            for sn in generate_nums
+            if not _shot_asset_ready(_shot_video_mp4_path(project_id, ep_num, sn))
+        ]
+        kept = [sn for sn in generate_nums if sn not in missing]
+        if kept:
+            _job_update(
+                jid,
+                "running",
+                0.06,
+                f"已有分镜视频跳过：镜 {kept}；待补 {len(missing)} 镜",
+            )
+        generate_nums = missing
+
+    # 默认不自动拼接：批量只出分镜视频，合并用 mux_only / auto_concat
+    auto_concat = bool(job_params.get("auto_concat")) or mux_only
+    if only_shots:
+        auto_concat = False
+
+    if not mux_only:
+        if not generate_nums and not auto_concat:
+            _reconcile_shot_videos_from_disk(project_id, episode_id, ep_num, shots)
+            _job_update(
+                jid,
+                "done",
+                1.0,
+                f"全部待做镜已有视频，已跳过生成；请点「合并成片」拼接",
+            )
+            return
+        if generate_nums:
+            _assert_shot_stills_for_video(
+                project_id,
+                episode_id,
+                shot_nums=generate_nums,
+                mux_only=False,
+            )
+
+    prompt = _build_drama10_prompt(
+        project_id,
+        episode_id,
+        shot_nums=generate_nums if (only_shots or rerun_raw or skip_existing_videos) else None,
+        for_video=True,
+    )
+    if not mux_only and generate_nums and not prompt.strip():
+        raise ValueError("无 Drama10 脚本，请先生成 Prompt 或填写镜头")
+    if prompt.strip():
+        save_drama10_export_file(project_id, ep_num, prompt)
+
+    with_audio = bool(job_params.get("preview_with_audio", True))
+    shot_by_num = {int(s["shot_num"]): s for s in shots}
+
+    if not mux_only and generate_nums:
+        n_vid = len(generate_nums)
+        seg = 0.7 / max(n_vid, 1)
+        for i, sn in enumerate(generate_nums):
+            if not _job_still_running(jid):
+                return
+            base = 0.12 + i * seg
+            still = _shot_still_png_path(project_id, ep_num, sn)
+            dest = shots_dir / f"shot_{sn:02d}.mp4"
+            shot_row = shot_by_num.get(sn) or {}
+            try:
+                block = filter_prompt_shots(prompt, [sn])
+            except ValueError:
+                # Drama10 块缺失时，用镜头表 visual/台词拼一段可用提示，避免整集漏镜
+                voices = shot_row.get("voices") or []
+                lines = []
+                for v in voices:
+                    if isinstance(v, dict) and (v.get("text") or "").strip():
+                        lines.append(f"{v.get('role') or '旁白'}：{(v.get('text') or '').strip()}")
+                block = (
+                    f"镜头 {sn}\n"
+                    f"画面：{(shot_row.get('visual') or shot_row.get('title') or '').strip()}\n"
+                    f"运镜：{(shot_row.get('motion') or '缓慢推进').strip()}\n"
+                    + ("台词：\n" + "\n".join(lines) if lines else "")
+                ).strip() or prompt
+            dur = float(shot_row.get("duration_sec") or 6)
+            if only_shots:
+                label = f"单段-第{ep_num}集镜{sn}"
+            else:
+                label = _job_mark_current_shot(
+                    jid,
+                    sn,
+                    ep_num=ep_num,
+                    shot=shot_row,
+                    index=i + 1,
+                    total=n_vid,
+                    progress=base,
+                    phase="视频生成中",
+                )
+
+            def _tick(msg: str, _base: float = base, _label: str = label) -> None:
+                if not _job_still_running(jid):
+                    return
+                _job_update(
+                    jid,
+                    "running",
+                    _base + seg * 0.4,
+                    f"{_label} · {msg}",
+                    patch_params={"current_shot_num": int(sn)},
+                )
+
+            if only_shots:
+                _job_update(jid, "running", base, f"{label} · 准备提交…")
+            else:
+                _job_update(
+                    jid,
+                    "running",
+                    base,
+                    f"{label}视频生成中 · 准备提交…",
+                    patch_params={"current_shot_num": int(sn)},
+                )
+            extra_paths: List[Path] = []
+            for rel in job_params.get("ref_image_paths") or shot_row.get("ref_images") or []:
+                if isinstance(rel, dict):
+                    rel = rel.get("path") or ""
+                rel = str(rel or "").strip().lstrip("/")
+                if not rel or ".." in rel.split("/"):
+                    continue
+                ap = db.project_dir(project_id) / rel
+                if ap.is_file():
+                    extra_paths.append(ap)
+            mm.generate_shot_i2v(
+                still_png=still,
+                prompt=block,
+                duration_sec=dur,
+                dest_mp4=dest,
+                on_progress=_tick,
+                shot=shot_row,
+                project_id=project_id,
+                with_speech=with_audio,
+                extra_ref_images=extra_paths,
+            )
+            if not _job_still_running(jid):
+                # 本段可能已落盘，先写回再退出
+                _reconcile_shot_videos_from_disk(
+                    project_id, episode_id, ep_num, shots
+                )
+                return
+            if not with_audio:
+                _job_update(
+                    jid, "running", base + seg * 0.85, f"{label} · 去除音轨…"
+                )
+                _strip_mp4_audio_inplace(dest)
+            # 一段完成后立刻写库，工作台轮询即可看到本段视频
+            _reconcile_shot_videos_from_disk(project_id, episode_id, ep_num, shots)
+            _job_update(
+                jid,
+                "running",
+                base + seg * 0.95,
+                f"{label}已完成 · 进入下一段…"
+                if i + 1 < n_vid
+                else f"{label}已完成",
+                patch_params={"current_shot_num": int(sn), "last_done_shot": int(sn)},
+            )
+
+    _reconcile_shot_videos_from_disk(project_id, episode_id, ep_num, shots)
+    if not _job_still_running(jid):
+        return
+
+    if not auto_concat:
+        done_msg = (
+            f"整集分段视频已依次完成（官方 H3）：本轮新出 {generate_nums or '无'} 段；"
+            "未拼接，可点「合并成片」"
+            if not only_shots
+            else (
+                f"单段视频已生成（官方 H3）：镜 {video_shot_nums}"
+                + ("（MiniMax 一次生成音轨）" if with_audio else "（已去音轨）")
+            )
+        )
+        _job_update(
+            jid,
+            "done",
+            1.0,
+            done_msg,
+            patch_params={"current_shot_num": None},
+        )
+        return
+
+    # 合并：按全集镜号顺序拼接已有 mp4（缺镜则报错）
+    concat_nums = list(video_shot_nums)
+    clips: List[Path] = []
+    missing_v: List[int] = []
+    for sn in concat_nums:
+        p = shots_dir / f"shot_{sn:02d}.mp4"
+        if not _shot_asset_ready(p):
+            missing_v.append(sn)
+            continue
+        clips.append(p)
+    if missing_v:
+        raise FileNotFoundError(
+            f"镜 {missing_v} 尚无分镜视频，无法合并。请先「批量补缺分镜视频」。"
+        )
+    if not clips:
+        raise FileNotFoundError("没有任何分镜视频可合并")
+
+    out_mp4 = ep_dir / f"EP{ep_num:02d}_final.mp4"
+    _job_update(jid, "running", 0.88, f"官方 H3 · ffmpeg 合并 {len(clips)} 镜…")
+    _ffmpeg_concat_shot_mp4s(clips, out_mp4)
+    rel_video = str(out_mp4.relative_to(db.project_dir(project_id))).replace("\\", "/")
+
+    try:
+        pl = json.loads(ep.get("pipeline_json") or "{}")
+    except json.JSONDecodeError:
+        pl = _default_episode_pipeline()
+    pl["video"] = "done"
+    if shots:
+        pl["storyboard_images"] = pl.get("storyboard_images") or "done"
+    update_episode(episode_id, video_path=rel_video, pipeline_json=pl)
+    _job_update(
+        jid,
+        "done",
+        1.0,
+        f"{'合并成片' if mux_only else '成片'}完成（官方 H3）→ {out_mp4.name}",
+    )
+
+
 def _job_episode_video(
     jid: str,
     project_id: str,
@@ -2498,14 +4033,38 @@ def _job_episode_video(
 ) -> None:
     if not _job_still_running(jid):
         return
+    from .studio_settings import video_backend, use_minimax_official
+
+    # 官方 MiniMax API 已彻底关闭：一律走 Comfy / PPIO
+    if video_backend() == "minimax" or use_minimax_official():
+        raise RuntimeError(
+            "官方 MiniMax API 已彻底关闭。请使用云 GPU ComfyUI（视频后端选 comfy）。"
+        )
     job_params = job_params or {}
-    ep = get_episode(episode_id)
-    proj = get_project(project_id)
-    shots = ep.get("shots") or []
+    # H3 原生带音轨；禁止静音片与 Web 侧补音
+    job_params["preview_with_audio"] = True
+    job_params["no_web_remux"] = True
     only_shots_early: Optional[List[int]] = None
     _raw_sn = job_params.get("shot_nums")
     if _raw_sn:
         only_shots_early = [int(x) for x in _raw_sn]
+    # 镜长不足以说完末句时自动拉长，避免句尾被截断
+    dur_fix = ensure_shot_durations_cover_dialogue(
+        episode_id, shot_nums=only_shots_early
+    )
+    if dur_fix:
+        _job_update(
+            jid,
+            "running",
+            0.08,
+            "已按对白拉长镜长："
+            + "；".join(
+                f"镜{x['shot_num']} {x['from']:.0f}→{x['to']:.0f}s" for x in dur_fix[:6]
+            ),
+        )
+    ep = get_episode(episode_id)
+    proj = get_project(project_id)
+    shots = ep.get("shots") or []
     if only_shots_early:
         prompt = _build_drama10_prompt(
             project_id,
@@ -2528,7 +4087,9 @@ def _job_episode_video(
             for s in shots
         ]
     }
-    params = drama10_params(payload, int(proj["width"]), int(proj["height"]), None)
+    prefs = get_generation_prefs(project_id)
+    src_w, src_h = resolve_video_source_canvas(proj, prefs)
+    params = drama10_params(payload, src_w, src_h, None)
     ep_tag = f"ep{ep['ep_num']:02d}"
     vid_prefix = f"bingjing/{project_id[:8]}/{ep_tag}/final"
     sb_prefix = f"bingjing/{project_id[:8]}/{ep_tag}/storyboard_run"
@@ -2564,7 +4125,7 @@ def _job_episode_video(
     else:
         _job_update(jid, "running", 0.12, "整集 · 使用分镜图 shot_XX.png 逐镜图生视频…")
 
-    vid_w, vid_h = adapt_canvas_for_video(int(proj["width"]), int(proj["height"]))
+    vid_w, vid_h = adapt_canvas_for_video(src_w, src_h)
     n_shots = len(shots)
     video_shot_nums = [
         int(s["shot_num"])
@@ -2641,19 +4202,74 @@ def _job_episode_video(
         i2v_resume = False
         _job_update(jid, "running", 0.14, "全新成片：按当前分镜重跑 i2v…")
 
+    # 继续补全：默认跳过已有分段视频（与官方 API 路径一致）
+    skip_existing_comfy = (
+        not mux_only
+        and not only_shots
+        and not rerun_shot_nums
+        and not bool(job_params.get("fresh_video"))
+        and bool(job_params.get("skip_existing", True))
+    )
+    if skip_existing_comfy and video_shot_nums:
+        ep_num_i = int(ep["ep_num"])
+        missing = [
+            sn
+            for sn in video_shot_nums
+            if not _shot_asset_ready(_shot_video_mp4_path(project_id, ep_num_i, sn))
+        ]
+        kept = [sn for sn in video_shot_nums if sn not in missing]
+        if kept:
+            _job_update(
+                jid,
+                "running",
+                0.12,
+                f"已有分段跳过：{kept}；待补 {len(missing)} 段",
+            )
+        video_shot_nums = missing
+        if not video_shot_nums and not mux_only:
+            _reconcile_shot_videos_from_disk(
+                project_id, episode_id, ep_num_i, shots
+            )
+            _job_update(
+                jid,
+                "done",
+                1.0,
+                "全部待做分段已有视频，已跳过；可点「合并成片」",
+            )
+            return
+
     segmented_i2v = False
+    shot_by_num_comfy = {int(s["shot_num"]): s for s in shots}
     if _episode_video_use_segments() and video_shot_nums and not mux_only:
         segmented_i2v = True
         seg = 0.62 / max(len(video_shot_nums), 1)
         n_vid = len(video_shot_nums)
         for i, sn in enumerate(video_shot_nums):
+            if not _job_still_running(jid):
+                return
             base = 0.15 + i * seg
+            shot_row = shot_by_num_comfy.get(int(sn)) or {}
             if only_shots:
-                shot_label = f"单镜 {sn} · 图生视频（非整集 1/1）"
+                shot_label = f"单段-第{int(ep['ep_num'])}集镜{sn}"
             else:
-                shot_label = f"整集 · 第 {i + 1}/{n_vid} 镜（镜号 {sn}）· 图生视频"
-            _job_update(jid, "running", base, f"{shot_label} · 准备提交 Comfy…")
-            _comfy_episode_video_pass(
+                shot_label = _job_mark_current_shot(
+                    jid,
+                    int(sn),
+                    ep_num=int(ep["ep_num"]),
+                    shot=shot_row,
+                    index=i + 1,
+                    total=n_vid,
+                    progress=base,
+                    phase="视频生成中",
+                )
+            _job_update(
+                jid,
+                "running",
+                base,
+                f"{shot_label}视频生成中 · 准备提交 Comfy…",
+                patch_params={"current_shot_num": int(sn)},
+            )
+            hist_shot = _comfy_episode_video_pass(
                 jid,
                 prompt=prompt,
                 vid_w=vid_w,
@@ -2673,12 +4289,56 @@ def _job_episode_video(
                 pass_label=shot_label,
                 resume_ckpt=i2v_resume,
             )
+            if not _job_still_running(jid):
+                _reconcile_shot_videos_from_disk(
+                    project_id, episode_id, int(ep["ep_num"]), shots
+                )
+                return
+            # 云 GPU：ckpt 在远端磁盘，立刻经 /view 落盘到项目，避免后续导入失败
+            got = _import_shot_video_from_history(
+                hist_shot,
+                project_id,
+                int(ep["ep_num"]),
+                int(sn),
+                vid_prefix=vid_prefix,
+            )
+            if got is None:
+                _import_shot_videos_from_comfy_ckpt(
+                    project_id,
+                    int(ep["ep_num"]),
+                    len(shots),
+                    shot_nums=[int(sn)],
+                    prefer_audio=True,
+                )
+            _reconcile_shot_videos_from_disk(
+                project_id, episode_id, int(ep["ep_num"]), shots
+            )
+            dest_chk = (
+                db.project_dir(project_id)
+                / "episodes"
+                / f"ep{int(ep['ep_num']):02d}"
+                / "shots"
+                / f"shot_{int(sn):02d}.mp4"
+            )
+            if not dest_chk.is_file():
+                raise FileNotFoundError(f"{shot_label} 视频未落盘")
+            _ensure_shot_audio_usable(
+                project_id,
+                episode_id,
+                int(sn),
+                dest_chk,
+                shot_label=shot_label,
+            )
             if i + 1 < n_vid:
                 _job_update(
                     jid,
                     "running",
                     base + seg * 0.98,
-                    f"第 {i + 1}/{n_vid} 镜已完成 · 准备下一镜…",
+                    f"{shot_label}已完成（含原生音轨）· 进入下一段…",
+                    patch_params={
+                        "current_shot_num": int(sn),
+                        "last_done_shot": int(sn),
+                    },
                 )
             if sn != video_shot_nums[-1] and _episode_video_restart_comfy_between_shots():
                 _restart_comfy_user_service()
@@ -2688,11 +4348,12 @@ def _job_episode_video(
         and not mux_only
         and bool(job_params.get("preview_with_audio", True))
     ):
+        # 只要 H3 原生音轨：导入后校验
         _job_update(
             jid,
             "running",
             0.72,
-            f"整集 · 导入 {len(video_shot_nums)} 镜并补混音（TTS+环境+BGM）…",
+            f"整集 · 导入 {len(video_shot_nums)} 镜并校验 H3 原生音轨…",
         )
         _import_shot_videos_from_comfy_ckpt(
             project_id,
@@ -2701,8 +4362,6 @@ def _job_episode_video(
             shot_nums=video_shot_nums,
             prefer_audio=True,
         )
-        from .shot_audio_mux import mux_shot_mp4_if_silent
-
         for _sn in video_shot_nums:
             dest = (
                 db.project_dir(project_id)
@@ -2712,19 +4371,16 @@ def _job_episode_video(
                 / f"shot_{int(_sn):02d}.mp4"
             )
             if not dest.is_file():
-                raise FileNotFoundError(f"镜 {_sn} 视频未落盘，无法混音")
-            mux_shot_mp4_if_silent(
-                project_id, episode_id, int(_sn), force=True
+                raise FileNotFoundError(f"镜 {_sn} 视频未落盘")
+            _ensure_shot_audio_usable(
+                project_id, episode_id, int(_sn), dest, shot_label=f"镜 {_sn}"
             )
-        _push_muxed_shots_to_latest_comfy_ckpt(
-            project_id, int(ep["ep_num"]), video_shot_nums
-        )
         _reconcile_shot_videos_from_disk(
             project_id, episode_id, int(ep["ep_num"]), shots
         )
     if skip_final_mux and not mux_only and not segmented_i2v and video_shot_nums:
         sn = video_shot_nums[0]
-        _comfy_episode_video_pass(
+        hist_one = _comfy_episode_video_pass(
             jid,
             prompt=prompt,
             vid_w=vid_w,
@@ -2744,48 +4400,47 @@ def _job_episode_video(
             pass_label=f"单镜 {sn} · 图生视频（非整集）",
             resume_ckpt=i2v_resume,
         )
+        _import_shot_video_from_history(
+            hist_one,
+            project_id,
+            int(ep["ep_num"]),
+            int(sn),
+            vid_prefix=vid_prefix,
+        )
     if skip_final_mux:
         _job_update(
             jid,
             "running",
             0.9,
-            f"单镜完成 · 导入镜 {video_shot_nums} 视频（未拼接整集）…",
+            f"单段完成 · 导入镜 {video_shot_nums} 并校验 H3 原生音轨…",
         )
-        with_audio = bool(job_params.get("preview_with_audio", True))
         _import_shot_videos_from_comfy_ckpt(
             project_id,
             int(ep["ep_num"]),
             len(shots),
             shot_nums=video_shot_nums,
-            prefer_audio=with_audio,
+            prefer_audio=True,
         )
-        if with_audio:
-            from .shot_audio_mux import mux_shot_mp4_if_silent
-
-            for _sn in video_shot_nums:
-                dest = (
-                    db.project_dir(project_id)
-                    / "episodes"
-                    / f"ep{int(ep['ep_num']):02d}"
-                    / "shots"
-                    / f"shot_{int(_sn):02d}.mp4"
-                )
-                if not dest.is_file():
-                    raise FileNotFoundError(f"镜 {_sn} 视频未落盘，无法混音")
-                mux_shot_mp4_if_silent(
-                    project_id, episode_id, int(_sn), force=True
-                )
-                if not _mp4_has_audio_stream(dest):
-                    raise RuntimeError(
-                        f"镜 {_sn} 无音轨：Comfy 与 Web 补混音均失败，请检查 edge-tts"
-                    )
+        for _sn in video_shot_nums:
+            dest = (
+                db.project_dir(project_id)
+                / "episodes"
+                / f"ep{int(ep['ep_num']):02d}"
+                / "shots"
+                / f"shot_{int(_sn):02d}.mp4"
+            )
+            if not dest.is_file():
+                raise FileNotFoundError(f"镜 {_sn} 视频未落盘")
+            _ensure_shot_audio_usable(
+                project_id, episode_id, int(_sn), dest, shot_label=f"镜 {_sn}"
+            )
         _reconcile_shot_videos_from_disk(project_id, episode_id, int(ep["ep_num"]), shots)
-        done_msg = (
-            f"单镜视频已生成（含本镜配音+环境声）：镜 {video_shot_nums}（未拼接整集）"
-            if with_audio
-            else f"单镜无声视频已生成：镜 {video_shot_nums}"
+        _job_update(
+            jid,
+            "done",
+            1.0,
+            f"单段视频已生成（可用音轨）：镜 {video_shot_nums}（未拼接整集）",
         )
-        _job_update(jid, "done", 1.0, done_msg)
         return
 
     need_segment_mux = _episode_video_use_segments() and (
@@ -2797,9 +4452,9 @@ def _job_episode_video(
                 jid,
                 "running",
                 0.2,
-                "单镜视频已齐 · 拼接镜头 + 混音（跳过 i2v）…",
+                "单镜视频已齐 · 拼接成片（跳过 i2v）…",
             )
-        mux_label = "拼接镜头与混音（ffmpeg）"
+        mux_label = "拼接成片"
         hist = _comfy_episode_video_pass(
             jid,
             prompt=prompt,
@@ -2841,10 +4496,28 @@ def _job_episode_video(
         )
 
     _job_update(jid, "running", 0.94, "Comfy 已完成 · 正在定位成片文件…")
-    imgs, vids = resolve_output_files(hist)
+    imgs, vids = resolve_output_files(hist or {}, client=ComfyClient())
     video_src = vids[0] if vids else find_newest_under(vid_prefix, ".mp4")
     if video_src is None or not video_src.is_file():
-        raise FileNotFoundError("未找到 ComfyUI 成片 MP4")
+        # 云 GPU 上 finalize 偶发未进 history：用已落盘单镜本地拼接兜底
+        clips = []
+        for sn in video_shot_nums:
+            p = (
+                db.project_dir(project_id)
+                / "episodes"
+                / f"ep{int(ep['ep_num']):02d}"
+                / "shots"
+                / f"shot_{int(sn):02d}.mp4"
+            )
+            if p.is_file() and p.stat().st_size > 512:
+                clips.append(p)
+        if len(clips) >= 1:
+            out_mp4 = ep_dir / f"EP{ep['ep_num']:02d}_final.mp4"
+            _job_update(jid, "running", 0.95, "成片未从 Comfy 取回 · 本地拼接单镜…")
+            _ffmpeg_concat_shot_mp4s(clips, out_mp4)
+            video_src = out_mp4
+        else:
+            raise FileNotFoundError("未找到 ComfyUI 成片 MP4")
 
     out_mp4 = ep_dir / f"EP{ep['ep_num']:02d}_final.mp4"
     _job_update(jid, "running", 0.97, f"正在写入 {out_mp4.name}…")
@@ -2878,10 +4551,14 @@ def seed_bingjing_if_empty() -> Optional[str]:
         style_prefix="国风仙侠电影感，冰雪蓝调，横屏16比9，超清，无文字无水印，单镜头全屏电影画面",
         project_id=CANONICAL_BINGJING_PROJECT_ID,
     )["id"]
+    from .voice_cast import DEFAULT_VOICE_CAST
+
+    prefs = default_prefs()
+    prefs["voice_cast"] = list(DEFAULT_VOICE_CAST)
     update_project_docs(
         pid,
         outline_md="刃雪城、卡索与樱空释、冰镜预言、潮雾之患。（详见 project 文档）",
-        generation_prefs_json=default_prefs(),
+        generation_prefs_json=prefs,
     )
     upsert_character(
         pid,
