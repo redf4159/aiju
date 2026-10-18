@@ -113,37 +113,52 @@ def build_episode_video_workflow(
     width: int,
     height: int,
     *,
-    shot_duration: float = 6.0,
+    shot_duration: float = 9.0,
     noise_seed: int = 42,
-    steps: int = 8,
+    steps: int = 7,
     grid_cols: int = 5,
     grid_rows: int = 2,
     auto_storyboard: bool = True,
     resume: bool = False,
     collage_image: Optional[str] = None,
     shot_stills_subdir: Optional[str] = None,
+    ref_images_subdir: Optional[str] = None,
     video_prefix: str = "bingjing/ep_video",
     storyboard_prefix: str = "bingjing/ep_storyboard",
     single_shot_index: int = 0,
     finalize_mux: bool = True,
     preview_with_audio: bool = True,
+    turbo_mode: bool = False,
+    shift_video: float = 12.0,
+    shift_audio: float = 3.0,
 ) -> Dict[str, Any]:
     """Drama10ShotMiniMaxH3 → SaveVideo + SaveImage（成片 + 分镜拼图）。"""
     g = _loader_nodes()
+    # 模型使用标准：video sigma shift=12 / audio sigma shift=3
+    g["6b"] = {
+        "class_type": "MiniMaxH3SigmaShift",
+        "inputs": {
+            "model": ["6", 0],
+            "shift_video": float(shift_video),
+            "shift_audio": float(shift_audio),
+        },
+    }
     drama_inputs: Dict[str, Any] = {
-        "model": ["6", 0],
+        "model": ["6b", 0],
         "clip": ["3", 0],
         "vae": ["4", 0],
         "audio_vae": ["5", 0],
         "prompt": prompt,
         "width": width,
         "height": height,
-        "shot_duration": min(12.0, max(2.0, float(shot_duration))),
+        # 单镜 3~10s（内容少可短）
+        "shot_duration": min(10.0, max(3.0, float(shot_duration))),
         "noise_seed": noise_seed,
-        "turbo_mode": True,
-        "steps": steps,
-        "grid_cols": grid_cols,
-        "grid_rows": grid_rows,
+        "turbo_mode": bool(turbo_mode),
+        "steps": int(max(6, min(7, steps))),
+        # Comfy 节点 Drama10ShotMiniMaxH3：grid_cols / grid_rows 均最大 10
+        "grid_cols": max(1, min(10, int(grid_cols or 5))),
+        "grid_rows": max(1, min(10, int(grid_rows or 2))),
         "auto_storyboard": auto_storyboard,
         "resume": resume,
         "single_shot_index": int(single_shot_index),
@@ -157,6 +172,9 @@ def build_episode_video_workflow(
     drama_inputs["shot_stills_subdir"] = subdir
     if subdir:
         drama_inputs["auto_storyboard"] = False
+    ref_sub = (ref_images_subdir or "").strip().replace("\\", "/")
+    if ref_sub:
+        drama_inputs["ref_images_subdir"] = ref_sub
     g["20"] = {"class_type": "Drama10ShotMiniMaxH3", "inputs": drama_inputs}
     g["21"] = {
         "class_type": "SaveVideo",

@@ -31,7 +31,12 @@ import comfy.model_management
 from comfy_api.latest import ComfyExtension, io
 from comfy_api.latest._input_impl import VideoFromFile
 
-from comfy_extras.nodes_minimax_h3 import MiniMaxH3ImageToVideo, align_frame_count, FPS
+from comfy_extras.nodes_minimax_h3 import (
+    MiniMaxH3ImageToVideo,
+    MiniMaxH3ReferenceToVideo,
+    align_frame_count,
+    FPS,
+)
 from comfy_extras.nodes_custom_sampler import (
     RandomNoise,
     BasicGuider,
@@ -40,9 +45,13 @@ from comfy_extras.nodes_custom_sampler import (
     SamplerCustomAdvanced,
 )
 from comfy_extras.nodes_video import CreateVideo
+import node_helpers
 
 import math
 import os
+
+# MiniMaxH3ReferenceToVideo Autogrow 上限：参考图最多 9 张（含首帧）
+H3_MAX_REF_IMAGES = 9
 
 CANVAS_MULTIPLE = 32
 
@@ -1822,6 +1831,49 @@ def _crossfade_pair(left: torch.Tensor, right: torch.Tensor, fps: float, xfade_s
     return out
 
 
+def _load_ref_tensors_from_subdir(subdir: str, *, max_n: int = 8) -> list:
+    """从 Comfy input/<subdir> 加载参考图张量（不含首帧；首帧仍用分镜 tile）。"""
+    sub = (subdir or "").strip().replace("\\", "/").strip("/")
+    if not sub:
+        return []
+    root = Path(folder_paths.get_input_directory()) / sub
+    if not root.is_dir():
+        return []
+    files = sorted(
+        [p for p in root.iterdir() if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")]
+    )
+    # 优先 ref_01.png …；否则按文件名排序
+    numbered = [p for p in files if re.match(r"^ref_\d+", p.stem, re.I)]
+    pick = numbered if numbered else files
+    out = []
+    for p in pick[: max(0, int(max_n))]:
+        try:
+            out.append(_load_png_tensor(p))
+            print(f"[Drama10] ref load {p.name}", flush=True)
+        except Exception as e:
+            print(f"[Drama10] ref skip {p.name}: {e}", flush=True)
+    return out
+
+
+def _prompt_with_picture_tags(prompt: str, n_pictures: int) -> str:
+    """为 ReferenceToVideo 补齐 <Picture i> 标签。"""
+    text = (prompt or "").strip()
+    if n_pictures < 1:
+        return text
+    if "<Picture" in text or "<picture" in text:
+        return text
+    lines = ["【参考图锁定·须严格遵从】"]
+    lines.append("<Picture 1>：本镜首帧构图与场面（分镜静帧）；站位/运镜以此为准。")
+    for i in range(2, n_pictures + 1):
+        lines.append(
+            f"<Picture {i}>：角色/场景/道具外形参考；须锁脸、锁发型服装、锁场景结构，禁止换人换装。"
+        )
+    lines.append(
+        "成片人物五官与服装必须与参考图一致；场景道具与参考图一致；禁止另造一张脸。"
+    )
+    return "\n".join(lines) + "\n\n" + text
+
+
 def _gen_one_shot(
     model,
     clip,
@@ -1835,20 +1887,65 @@ def _gen_one_shot(
     steps: int,
     sampler,
     audio_vae=None,
+    ref_images=None,
 ):
-    """采样 MiniMax H3 联合 AV latent：视频 VAE + 音频 VAE 原生解码（不做 TTS）。"""
-    pos, latent = _uw(
-        MiniMaxH3ImageToVideo.execute(
-            clip=clip,
-            vae=vae,
-            prompt=prompt,
-            width=int(width),
-            height=int(height),
-            length=int(length),
-            first_frame=first_frame,
-            last_frame=None,
+    """采样 MiniMax H3 联合 AV latent：视频 VAE + 音频 VAE 原生解码（不做 TTS）。
+
+    ref_images：额外参考图张量列表（人物/场景/道具）。有额外参考时走
+    MiniMaxH3ReferenceToVideo（最多 9 张，含首帧），并仍把首帧写入 keyframe。
+    """
+    extras = [t for t in (ref_images or []) if t is not None][: max(0, H3_MAX_REF_IMAGES - 1)]
+    use_multi_ref = first_frame is not None and bool(extras)
+
+    if use_multi_ref:
+        ordered = [first_frame] + extras
+        ordered = ordered[:H3_MAX_REF_IMAGES]
+        ref_dict = {}
+        for i, img in enumerate(ordered, start=1):
+            ref_dict[f"ref_image_{i}"] = _as_thwc(img)
+        ref_prompt = _prompt_with_picture_tags(prompt, len(ordered))
+        print(
+            f"[Drama10] H3 multi-ref · {len(ordered)} pictures "
+            f"(1=first_frame + {len(extras)} asset refs)",
+            flush=True,
         )
-    )
+        pos, latent = _uw(
+            MiniMaxH3ReferenceToVideo.execute(
+                clip=clip,
+                vae=vae,
+                audio_vae=audio_vae,
+                prompt=ref_prompt,
+                width=int(width),
+                height=int(height),
+                length=int(length),
+                ref_image_size="max",
+                ref_images=ref_dict,
+            )
+        )
+        # 首帧仍作几何锚点（与纯 I2V 一致），避免只锁脸却丢构图
+        try:
+            from comfy_extras.nodes_minimax_h3 import _resize as _h3_resize
+        except Exception:
+            _h3_resize = None
+        if _h3_resize is not None:
+            img0 = _h3_resize(_as_thwc(first_frame)[:1], int(width), int(height), "disabled")
+        else:
+            img0 = _resize_tile(first_frame, int(width), int(height))[:1]
+        kf = {"resolved_frame_index": 0, "latent": vae.encode(img0)}
+        pos = node_helpers.conditioning_set_values(pos, {"minimax_keyframes": [kf]})
+    else:
+        pos, latent = _uw(
+            MiniMaxH3ImageToVideo.execute(
+                clip=clip,
+                vae=vae,
+                prompt=prompt,
+                width=int(width),
+                height=int(height),
+                length=int(length),
+                first_frame=first_frame,
+                last_frame=None,
+            )
+        )
     noise = _uw(RandomNoise.execute(noise_seed=int(noise_seed)))[0]
     guider = _uw(BasicGuider.execute(model=model, conditioning=pos))[0]
     sigmas = _uw(BasicScheduler.execute(model=model, scheduler="simple", steps=int(steps), denoise=1.0))[0]
@@ -1959,6 +2056,11 @@ class Drama10ShotMiniMaxH3(io.ComfyNode):
                     default="",
                     tooltip="相对 Comfy input 的目录，内含 shot_01.png …；与 auto_storyboard=False 联用。",
                 ),
+                io.String.Input(
+                    "ref_images_subdir",
+                    default="",
+                    tooltip="相对 Comfy input 的参考图目录（ref_01.png…），人物/场景/道具；与首帧合计最多 9 张。",
+                ),
                 io.String.Input("prompt", multiline=True, default=""),
                 io.Int.Input("width", default=352, min=32, max=nodes.MAX_RESOLUTION, step=32),
                 io.Int.Input("height", default=608, min=32, max=nodes.MAX_RESOLUTION, step=32),
@@ -2024,6 +2126,7 @@ class Drama10ShotMiniMaxH3(io.ComfyNode):
         grid_rows,
         first_frame=None,
         shot_stills_subdir="",
+        ref_images_subdir="",
         auto_storyboard=True,
         resume=True,
         single_shot_index=0,
@@ -2033,6 +2136,15 @@ class Drama10ShotMiniMaxH3(io.ComfyNode):
         width, height = _adapt_canvas_minimax(int(width), int(height))
         print(f"[Drama10] canvas {width}x{height}", flush=True)
         shot_only = int(single_shot_index or 0)
+        extra_ref_tensors = _load_ref_tensors_from_subdir(
+            ref_images_subdir, max_n=H3_MAX_REF_IMAGES - 1
+        )
+        if extra_ref_tensors:
+            print(
+                f"[Drama10] ref_images_subdir={ref_images_subdir!r} "
+                f"loaded {len(extra_ref_tensors)} asset refs",
+                flush=True,
+            )
         preview_one_shot = shot_only > 0 and not bool(finalize_mux)
         block_shot_nums: list[int] = []
 
@@ -2352,6 +2464,7 @@ class Drama10ShotMiniMaxH3(io.ComfyNode):
                     i2v_steps,
                     sampler,
                     audio_vae=audio_vae,
+                    ref_images=extra_ref_tensors,
                 )
                 imgs = _correct_i2v_orientation(
                     tile_in, imgs, int(width), int(height), orig_sn=orig_sn

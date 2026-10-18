@@ -9,6 +9,7 @@ from . import db
 KEY_OHMYGPT_API_KEY = "ohmygpt_api_key"
 KEY_OHMYGPT_API_BASE = "ohmygpt_api_base"
 KEY_VIDEO_BACKEND = "video_backend"
+KEY_COMFY_VIDEO_MODEL = "comfy_video_model"
 KEY_PPIO_API_KEY = "ppio_api_key"
 KEY_PPIO_ENDPOINT_KEY = "ppio_endpoint_key"
 KEY_PPIO_ASYNC_BASE = "ppio_async_base"
@@ -26,10 +27,22 @@ DEFAULT_MINIMAX_API_BASE = "https://api.minimax.cn"
 DEFAULT_MINIMAX_MODEL = "MiniMax-H3-Max"
 DEFAULT_MINIMAX_RESOLUTION = "480P"
 VALID_VIDEO_BACKENDS = ("comfy", "ppio")
+VALID_COMFY_VIDEO_MODELS = ("minimax_h3", "ltx25")
+DEFAULT_COMFY_VIDEO_MODEL = "minimax_h3"
 VALID_MINIMAX_MODELS = ("MiniMax-H3", "MiniMax-H3-Max")
 VALID_MINIMAX_RESOLUTIONS = ("480P", "768P", "2K")
 # 硬开关：任何路径不得再走官方 MiniMax HTTP API
 MINIMAX_OFFICIAL_API_DISABLED = True
+
+
+def comfy_video_model() -> str:
+    """Comfy 成片模型：minimax_h3 | ltx25。"""
+    v = (_get(KEY_COMFY_VIDEO_MODEL) or DEFAULT_COMFY_VIDEO_MODEL).strip().lower()
+    return v if v in VALID_COMFY_VIDEO_MODELS else DEFAULT_COMFY_VIDEO_MODEL
+
+
+def use_ltx25_video() -> bool:
+    return video_backend() == "comfy" and comfy_video_model() == "ltx25"
 
 
 def _get(key: str) -> Optional[str]:
@@ -211,19 +224,36 @@ def get_video_backend_settings_public() -> Dict[str, Any]:
     ppio_key = ppio_api_key()
     backend = video_backend()
     active = active_video_backend()
+    model = comfy_video_model()
     notes = {
         "ppio": "PPIO Async Serverless；Endpoint 内需有 H3/Drama10 镜像。",
-        "comfy": "云 GPU / 隧道 ComfyUI（MiniMax H3 本地推理，非官方 API）。",
+        "comfy": "云 GPU / 隧道 ComfyUI 本地推理（可选 MiniMax H3 或 LTX-2.5）。",
     }
     warn = ""
     if backend == "ppio" and not ppio_ready():
         warn = "已选 PPIO 但密钥未齐，将回退 Comfy。"
+    model_note = (
+        "当前模型 LTX-2.5（INT8，偏音频稳定）。"
+        if model == "ltx25"
+        else "当前模型 MiniMax H3（偏人脸/口型）。"
+    )
     return {
         "backend": backend,
+        "comfy_video_model": model,
+        "comfy_video_models": [
+            {
+                "id": "minimax_h3",
+                "label": "MiniMax H3（人脸/口型优先）",
+            },
+            {
+                "id": "ltx25",
+                "label": "LTX-2.5 INT8（音频稳定优先）",
+            },
+        ],
         "backends": [
             {
                 "id": "comfy",
-                "label": "云 GPU ComfyUI（MiniMax H3）",
+                "label": "云 GPU ComfyUI",
                 "ready": True,
             },
             {
@@ -246,7 +276,7 @@ def get_video_backend_settings_public() -> Dict[str, Any]:
             "key_hint": "",
             "ready": False,
             "disabled": True,
-            "note": "官方 MiniMax API 已彻底关闭，仅使用云 GPU Comfy H3。",
+            "note": "官方 MiniMax API 已彻底关闭，仅使用云 GPU Comfy。",
         },
         "ppio": {
             "async_base": ppio_async_base(),
@@ -258,6 +288,8 @@ def get_video_backend_settings_public() -> Dict[str, Any]:
         "active": active,
         "minimax_official_disabled": True,
         "note": notes.get(active, "")
+        + " "
+        + model_note
         + " 官方 MiniMax API 已关闭。"
         + ((" " + warn) if warn else ""),
     }
@@ -266,6 +298,7 @@ def get_video_backend_settings_public() -> Dict[str, Any]:
 def update_video_backend_settings(
     *,
     backend: Optional[str] = None,
+    comfy_video_model: Optional[str] = None,
     ppio_api_key: Optional[str] = None,
     ppio_endpoint_key: Optional[str] = None,
     ppio_async_base: Optional[str] = None,
@@ -283,6 +316,11 @@ def update_video_backend_settings(
         if b not in VALID_VIDEO_BACKENDS:
             raise ValueError("backend 仅支持 comfy / ppio（官方 minimax 已关闭）")
         _set(KEY_VIDEO_BACKEND, b)
+    if comfy_video_model is not None:
+        m = comfy_video_model.strip().lower()
+        if m not in VALID_COMFY_VIDEO_MODELS:
+            raise ValueError("comfy_video_model 仅支持 minimax_h3 / ltx25")
+        _set(KEY_COMFY_VIDEO_MODEL, m)
     # 无论请求如何，清掉库内官方 Key，防止误用
     if MINIMAX_OFFICIAL_API_DISABLED:
         _delete(KEY_MINIMAX_API_KEY)

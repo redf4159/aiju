@@ -1,0 +1,37 @@
+# 预览机（CPU 制作台）示例：代码在 /opt/ai-forge/bingjing/web，反向代理到公网域名
+# 安装：复制到 /etc/systemd/system/bingjing-web.service 后改密钥与 COMFYUI_URL，再 daemon-reload
+[Unit]
+Description=Bingjing Web Production Console (preview / ai-forge)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/ai-forge/bingjing/web
+Environment=BINGJING_DATA=/opt/ai-forge/bingjing/web/data
+# Comfy 经本机隧道或内网；按实际改端口
+Environment=COMFYUI_URL=http://127.0.0.1:18000
+Environment=COMFYUI_ROOT=/home/linux/ComfyUI
+Environment=PUBLIC_COMFYUI_URL=http://127.0.0.1:8000
+Environment=WEB_PUBLIC_URL=https://dj.preview.3swl.com
+# 部署时必改
+Environment=WEB_USER=changeme
+Environment=WEB_PASSWORD=changeme
+Environment=STORYBOARD_STEPS=14
+Environment=STORYBOARD_CLOSEUP_STEPS=18
+Environment=STORYBOARD_TILE_ROTATE=0
+Environment=EPISODE_VIDEO_SEGMENTED=1
+Environment=DRAMA10_WEB_AUDIO_ONLY=0
+Environment=DRAMA10_HUM_FALLBACK_REMUX=0
+# 分镜可用第三方 API（密钥用面板保存或下方 Environment，勿提交真实 Key）
+# Environment=STORYBOARD_BACKEND=image_api
+# Environment=STORYBOARD_IMAGE_API_BASE=https://your-gateway/v1
+# Environment=STORYBOARD_IMAGE_API_KEY=
+# Environment=STORYBOARD_IMAGE_MODEL=gpt-image-2.5-flare
+Environment=STORYBOARD_IMAGE_TIMEOUT=180
+Environment=STORYBOARD_STALE_SEC=420
+ExecStart=/opt/ai-forge/bingjing/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8097
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

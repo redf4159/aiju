@@ -75,15 +75,15 @@ def synthesize_speech_file(
     if _has_cjk(content):
         if force_male:
             edge_voice = os.environ.get("DRAMA10_MALE_EDGE_VOICE") or "zh-CN-YunxiNeural"
-            edge_rate = os.environ.get("DRAMA10_MALE_EDGE_RATE") or "+0%"
+            edge_rate = os.environ.get("DRAMA10_MALE_EDGE_RATE") or "+8%"
         elif want_young_female:
             edge_voice = (
                 os.environ.get("DRAMA10_NARRATOR_EDGE_VOICE") or "zh-CN-XiaoxiaoNeural"
             )
-            edge_rate = os.environ.get("DRAMA10_NARRATOR_EDGE_RATE") or "+3%"
+            edge_rate = os.environ.get("DRAMA10_NARRATOR_EDGE_RATE") or "+10%"
         else:
             edge_voice = os.environ.get("DRAMA10_MALE_EDGE_VOICE") or "zh-CN-YunxiNeural"
-            edge_rate = "+0%"
+            edge_rate = os.environ.get("DRAMA10_EDGE_RATE") or "+10%"
         try:
             asyncio.run(_edge(edge_voice, edge_rate))
             if dest.is_file() and dest.stat().st_size > 128:
@@ -122,10 +122,10 @@ def synthesize_speech_file(
             voice_id = (
                 os.environ.get("DRAMA10_NARRATOR_EDGE_VOICE") or "zh-CN-XiaoxiaoNeural"
             )
-            rate = os.environ.get("DRAMA10_NARRATOR_EDGE_RATE") or "+3%"
+            rate = os.environ.get("DRAMA10_NARRATOR_EDGE_RATE") or "+10%"
         else:
             voice_id = os.environ.get("DRAMA10_MALE_EDGE_VOICE") or "zh-CN-YunxiNeural"
-            rate = os.environ.get("DRAMA10_MALE_EDGE_RATE") or "+0%"
+            rate = os.environ.get("DRAMA10_MALE_EDGE_RATE") or "+8%"
         asyncio.run(_edge(voice_id, rate))
         if dest.is_file() and dest.stat().st_size > 128:
             _apply_role_voice_fx(dest, role)

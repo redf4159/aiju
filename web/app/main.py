@@ -14,7 +14,7 @@ from typing import Any, List, Optional, Tuple
 from urllib.parse import quote, unquote, urlencode
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -119,6 +119,8 @@ def _startup() -> None:
     services.recover_jobs_on_startup()
     services.seed_bingjing_if_empty()
     services.recover_production_data_on_startup()
+    # 双保险：出图/成片卡死看门狗（recover 内也会启动）
+    services.start_job_watchdog()
 
 
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
@@ -211,6 +213,7 @@ def api_ohmygpt_settings_put(body: OhmyGPTSettingsUpdate):
 
 class VideoBackendSettingsUpdate(BaseModel):
     backend: Optional[str] = None
+    comfy_video_model: Optional[str] = None
     ppio_api_key: Optional[str] = None
     ppio_endpoint_key: Optional[str] = None
     ppio_async_base: Optional[str] = None
@@ -232,6 +235,7 @@ def api_video_backend_settings_put(body: VideoBackendSettingsUpdate):
     try:
         return services.save_video_backend_settings(
             backend=body.backend,
+            comfy_video_model=body.comfy_video_model,
             ppio_api_key=body.ppio_api_key,
             ppio_endpoint_key=body.ppio_endpoint_key,
             ppio_async_base=body.ppio_async_base,
@@ -300,6 +304,8 @@ class ProjectUpdate(BaseModel):
     outline_md: Optional[str] = None
     series_scripts_note: Optional[str] = None
     generation_prefs: Optional[dict] = None
+    # 部分更新 script_meta（如 art_style / mode / aspect_ratio），与 style_prefix 一起按项目保存
+    script_meta: Optional[dict] = None
 
 
 @app.get("/api/projects")
@@ -330,6 +336,61 @@ def api_project_patch(project_id: str, body: ProjectUpdate):
                 doc_fields[k] = data.pop(k)
         if "generation_prefs" in data:
             doc_fields["generation_prefs_json"] = data.pop("generation_prefs")
+        meta_patch = data.pop("script_meta", None)
+        # 画风写入 style_prefix 时同步进 script_meta.art_style，保证解析/出图读同一份
+        style_val = data.get("style_prefix")
+        proj0 = services.get_project(project_id)
+        old_style = (proj0.get("style_prefix") or "").strip()
+        old_w = int(proj0.get("width") or 0)
+        old_h = int(proj0.get("height") or 0)
+        if isinstance(meta_patch, dict) or style_val is not None:
+            docs0 = proj0.get("docs") or {}
+            raw = docs0.get("script_meta_json") or "{}"
+            try:
+                cur_meta = (
+                    json.loads(raw)
+                    if isinstance(raw, str)
+                    else dict(raw or {})
+                )
+            except json.JSONDecodeError:
+                cur_meta = {}
+            if not isinstance(cur_meta, dict):
+                cur_meta = {}
+            if isinstance(meta_patch, dict):
+                cur_meta.update({k: v for k, v in meta_patch.items() if v is not None})
+            if style_val is not None:
+                cur_meta["art_style"] = style_val
+            # 宽高变更时同步 aspect_ratio，避免只改尺寸 meta 仍写旧画幅
+            if "width" in data or "height" in data:
+                nw = int(data.get("width") if data.get("width") is not None else old_w)
+                nh = int(data.get("height") if data.get("height") is not None else old_h)
+                if nw > 0 and nh > 0:
+                    cur_meta["aspect_ratio"] = "9:16" if nh > nw else "16:9"
+            doc_fields["script_meta_json"] = cur_meta
+        # 改画幅时清掉仍/视频独立分辨率覆盖，保证分镜图与成片跟项目宽高走
+        wh_changed = (
+            ("width" in data and int(data.get("width") or 0) != old_w)
+            or ("height" in data and int(data.get("height") or 0) != old_h)
+        )
+        if wh_changed:
+            prefs0 = services.get_generation_prefs(project_id)
+            prefs0["still_width"] = 0
+            prefs0["still_height"] = 0
+            prefs0["video_width"] = 0
+            prefs0["video_height"] = 0
+            if "generation_prefs_json" in doc_fields and isinstance(
+                doc_fields["generation_prefs_json"], dict
+            ):
+                doc_fields["generation_prefs_json"].update(
+                    {
+                        "still_width": 0,
+                        "still_height": 0,
+                        "video_width": 0,
+                        "video_height": 0,
+                    }
+                )
+            else:
+                doc_fields["generation_prefs_json"] = prefs0
         proj = services.update_project(project_id, **data) if data else services.get_project(project_id)
         if doc_fields:
             gp_sync = None
@@ -344,6 +405,42 @@ def api_project_patch(project_id: str, body: ProjectUpdate):
                 sync_voice_cast_to_characters(
                     project_id, gp_sync.get("voice_cast") or [], episode_id=""
                 )
+        # 画风变更：同步 look，并重写资产描述（改画幅不重写）
+        new_style = (style_val or "").strip() if style_val is not None else ""
+        if new_style and new_style != old_style:
+            from .generation_prefs import look_mode_for_style
+
+            prefs_sync = services.get_generation_prefs(project_id)
+            prefs_sync["look"] = look_mode_for_style(new_style, prefs_sync)
+            if prefs_sync["look"] == "illustration":
+                neg = (prefs_sync.get("negative_prompt") or "").strip()
+                for bad in (
+                    "禁止动漫、卡通、二次元、插画、赛璐璐、3D游戏渲染感、Q版、",
+                    "横屏错误、",
+                ):
+                    neg = neg.replace(bad, "")
+                prefs_sync["negative_prompt"] = neg
+            services.update_project_docs(
+                project_id, generation_prefs_json=prefs_sync
+            )
+            rewrite_info = services.rewrite_project_assets_art_style(
+                project_id, new_style
+            )
+            proj = services.get_project(project_id)
+            if isinstance(proj, dict):
+                proj = dict(proj)
+                proj["assets_art_rewritten"] = rewrite_info
+        else:
+            proj = services.get_project(project_id)
+        if isinstance(proj, dict) and wh_changed:
+            proj = dict(proj)
+            proj["canvas_updated"] = {
+                "width": int(proj.get("width") or 0),
+                "height": int(proj.get("height") or 0),
+                "aspect_ratio": ((proj.get("docs") or {}).get("script_meta") or {}).get(
+                    "aspect_ratio"
+                ),
+            }
         return proj
     except KeyError:
         raise HTTPException(404, "项目不存在")
@@ -430,8 +527,11 @@ async def api_character_upload_voice(
 
 
 class CharacterGenerateImageBody(BaseModel):
-    angle_label: str = "正面"
+    angle_label: str = "基础三视图"
     extra: str = ""
+    sheet_mode: str = "body"  # body=全身多角度+胸像；head=头部多角度
+    appearance_override: str = ""  # 某状态下的外表描述
+    replace_path: str = ""  # 重新生成时替换该图槽位
 
 
 class CharacterGenerateVoiceBody(BaseModel):
@@ -449,6 +549,9 @@ def api_character_generate_image(
             character_id,
             angle_label=body.angle_label,
             extra=body.extra,
+            sheet_mode=body.sheet_mode or "body",
+            appearance_override=body.appearance_override or "",
+            replace_path=body.replace_path or "",
         )
     except RuntimeError as e:
         raise HTTPException(409, str(e))
@@ -577,6 +680,9 @@ class StudioImportBody(BaseModel):
 class StudioParseBody(BaseModel):
     use_llm: bool = True
     model: Optional[str] = None
+    art_style: Optional[str] = None
+    aspect_ratio: Optional[str] = None
+    mode: Optional[str] = None
 
 
 @app.post("/api/studio/import")
@@ -638,7 +744,12 @@ def api_studio_parse_script(project_id: str, body: StudioParseBody = StudioParse
 
     try:
         return sp.parse_project_script(
-            project_id, use_llm=body.use_llm, model=body.model
+            project_id,
+            use_llm=body.use_llm,
+            model=body.model,
+            art_style=body.art_style,
+            aspect_ratio=body.aspect_ratio,
+            mode=body.mode,
         )
     except KeyError:
         raise HTTPException(404, "项目不存在")
@@ -847,6 +958,34 @@ def api_episodes_list(project_id: str):
     return {"episodes": services.list_episodes(project_id)}
 
 
+class EpisodeCreate(BaseModel):
+    title: Optional[str] = None
+    ep_num: Optional[int] = None
+
+
+@app.post("/api/projects/{project_id}/episodes")
+def api_episode_create(project_id: str, body: Optional[EpisodeCreate] = None):
+    body = body or EpisodeCreate()
+    try:
+        return services.add_episode(
+            project_id, title=body.title, ep_num=body.ep_num
+        )
+    except KeyError:
+        raise HTTPException(404, "项目不存在")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+def _nocache_json(data: Any) -> JSONResponse:
+    return JSONResponse(
+        data,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+        },
+    )
+
+
 @app.get("/api/episodes/{episode_id}")
 def api_episode_get(episode_id: str):
     try:
@@ -855,7 +994,7 @@ def api_episode_get(episode_id: str):
         st = services.compute_episode_status(episode_id, ep_row=ep, project_id=ep.get("project_id"))
         ep["pipeline"] = st["pipeline"]
         ep["production"] = st["detail"]
-        return ep
+        return _nocache_json(ep)
     except KeyError:
         raise HTTPException(404, "集不存在")
 
@@ -863,9 +1002,98 @@ def api_episode_get(episode_id: str):
 @app.patch("/api/episodes/{episode_id}")
 def api_episode_patch(episode_id: str, body: EpisodeUpdate):
     try:
-        return services.update_episode(episode_id, **body.model_dump(exclude_unset=True))
+        data = body.model_dump(exclude_unset=True)
+        sb = data.get("storyboard_md")
+        if isinstance(sb, str) and sb.strip():
+            from .studio_pipeline import _video_script_quality_ok, _video_script_to_shots
+
+            # 拒绝「重复 P001 / 残句台词」坏稿覆盖库内正确脚本
+            if not _video_script_quality_ok(sb):
+                raise HTTPException(
+                    400,
+                    "视频脚本质量异常（P段编号重复或台词残句），已拒绝保存。请刷新页面后重新生成脚本。",
+                )
+        ep = services.update_episode(episode_id, **data)
+        # 脚本保存后同步镜头对白/画面（保留已有分镜图与成片路径）
+        if isinstance(sb, str) and sb.strip():
+            try:
+                shots = _video_script_to_shots(sb)
+                if shots:
+                    services.replace_shots(episode_id, shots)
+                    ep = services.get_episode(episode_id)
+            except Exception:
+                pass
+        return _nocache_json(ep)
+    except HTTPException:
+        raise
     except KeyError:
         raise HTTPException(404, "集不存在")
+
+
+@app.delete("/api/episodes/{episode_id}")
+def api_episode_delete(episode_id: str):
+    try:
+        return services.delete_episode(episode_id)
+    except KeyError:
+        raise HTTPException(404, "集不存在")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class SceneCreate(BaseModel):
+    scene_name: Optional[str] = None
+    after_scene: Optional[int] = None
+
+
+class SegmentCreate(BaseModel):
+    scene_idx: Optional[int] = None
+    after_shot_num: Optional[int] = None
+
+
+@app.post("/api/episodes/{episode_id}/scenes")
+def api_episode_add_scene(episode_id: str, body: Optional[SceneCreate] = None):
+    body = body or SceneCreate()
+    try:
+        return services.add_episode_scene(
+            episode_id, scene_name=body.scene_name, after_scene=body.after_scene
+        )
+    except KeyError:
+        raise HTTPException(404, "集不存在")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/episodes/{episode_id}/scenes/{scene_idx}")
+def api_episode_delete_scene(episode_id: str, scene_idx: int):
+    try:
+        return services.delete_episode_scene(episode_id, scene_idx)
+    except KeyError:
+        raise HTTPException(404, "集不存在")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/episodes/{episode_id}/segments")
+def api_episode_add_segment(episode_id: str, body: Optional[SegmentCreate] = None):
+    body = body or SegmentCreate()
+    try:
+        return services.add_episode_segment(
+            episode_id, scene_idx=body.scene_idx, after_shot_num=body.after_shot_num
+        )
+    except KeyError:
+        raise HTTPException(404, "集不存在")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/episodes/{episode_id}/segments/{shot_num}")
+def api_episode_delete_segment(episode_id: str, shot_num: int):
+    try:
+        return services.delete_episode_segment(episode_id, shot_num)
+    except KeyError:
+        raise HTTPException(404, "集不存在")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.put("/api/episodes/{episode_id}/shots")
@@ -887,6 +1115,21 @@ class JobStart(BaseModel):
 @app.get("/api/projects/{project_id}/jobs")
 def api_jobs_list(project_id: str):
     return {"jobs": services.list_jobs(project_id)}
+
+
+@app.get("/api/jobs")
+def api_jobs_list_all(limit: int = 20, offset: int = 0):
+    """全系统任务记录（跨所有剧本），分页。"""
+    lim = max(1, min(int(limit or 20), 50))
+    off = max(0, int(offset or 0))
+    jobs = services.list_all_jobs(limit=lim, offset=off)
+    return {
+        "jobs": jobs,
+        "total": services.count_all_jobs(),
+        "limit": lim,
+        "offset": off,
+        "running_jobs": services.list_running_jobs(30),
+    }
 
 
 @app.post("/api/projects/{project_id}/jobs")
@@ -934,12 +1177,13 @@ def api_project_media_url(project_id: str, path: str, v: Optional[str] = None):
         raise HTTPException(404, "文件不存在")
     token = _issue_media_token(project_id, rel)
     path_enc = "/".join(quote(seg, safe="") for seg in rel.split("/"))
-    q = {"media_token": token}
-    if v:
-        q["v"] = v
+    # 用文件 mtime 做缓存戳，重生成后浏览器不会继续播旧片
+    mtime_v = str(int(target.stat().st_mtime))
+    q = {"media_token": token, "v": (v or mtime_v)}
     return {
         "url": f"/api/projects/{project_id}/files/{path_enc}?{urlencode(q)}",
         "path": rel,
+        "mtime": mtime_v,
         "expires_in": MEDIA_TOKEN_TTL_SEC,
     }
 
@@ -951,33 +1195,118 @@ def api_project_file(project_id: str, file_path: str):
     if not str(target).startswith(str(base)) or not target.is_file():
         raise HTTPException(404, "文件不存在")
     # FileResponse 支持 Range，浏览器可边下边播、拖拽进度条
+    # 视频/音频禁用长期缓存，避免重生成后仍播旧内容
+    headers = None
+    suf = target.suffix.lower()
+    if suf in {".mp4", ".webm", ".mov", ".m4a", ".mp3", ".wav"}:
+        headers = {
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+        }
     return FileResponse(
         target,
         filename=target.name,
         media_type=None,
+        headers=headers,
     )
 
 @app.post("/api/episodes/{episode_id}/shots/{shot_num}/image")
 async def api_upload_shot_image(
     episode_id: str, shot_num: int, file: UploadFile = File(...)
 ):
-    ep = services.get_episode(episode_id)
+    """上传 / 更新分镜图（统一落盘为 shot_XX.png，供图生视频使用）。"""
+    try:
+        ep = services.get_episode(episode_id)
+    except KeyError:
+        raise HTTPException(404, "集不存在")
+    if int(shot_num) < 1:
+        raise HTTPException(400, "镜号无效")
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "空文件")
+    ctype = (file.content_type or "").lower()
+    name = (file.filename or "").lower()
+    if not (
+        ctype.startswith("image/")
+        or name.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"))
+    ):
+        raise HTTPException(400, "请上传图片文件")
     proj_id = ep["project_id"]
     dest_dir = db.project_dir(proj_id) / "episodes" / f"ep{ep['ep_num']:02d}" / "shots"
     dest_dir.mkdir(parents=True, exist_ok=True)
-    ext = Path(file.filename or "img.png").suffix or ".png"
-    dest = dest_dir / f"shot_{shot_num:02d}{ext}"
-    content = await file.read()
-    dest.write_bytes(content)
+    sn = int(shot_num)
+    for old in dest_dir.glob(f"shot_{sn:02d}.*"):
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    dest = dest_dir / f"shot_{sn:02d}.png"
+    ext = Path(file.filename or "img.png").suffix.lower() or ".png"
+    if ext not in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"):
+        ext = ".png"
+    tmp = dest_dir / f".upload_{sn:02d}{ext}"
+    tmp.write_bytes(content)
+    try:
+        from PIL import Image
+
+        with Image.open(tmp) as im:
+            if im.mode in ("P", "RGBA", "LA"):
+                im = im.convert("RGBA")
+            else:
+                im = im.convert("RGB")
+            im.save(dest, "PNG")
+    except Exception:
+        # 无法转码时直接按 png 落盘（原生 png/兼容内容）
+        dest.write_bytes(content)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)  # type: ignore[call-arg]
+        except TypeError:
+            if tmp.is_file():
+                tmp.unlink()
     proj = services.get_project(proj_id)
-    fix_portrait_orientation(dest, int(proj["width"]), int(proj["height"]))
+    try:
+        fix_portrait_orientation(dest, int(proj["width"]), int(proj["height"]))
+    except Exception:
+        pass
     rel = str(dest.relative_to(db.project_dir(proj_id))).replace("\\", "/")
     with db.connect() as conn:
         conn.execute(
             "UPDATE shots SET image_path=? WHERE episode_id=? AND shot_num=?",
-            (rel, episode_id, shot_num),
+            (rel, episode_id, sn),
         )
-    return {"image_path": rel, "url": f"/api/projects/{proj_id}/files/{rel}"}
+    return {
+        "image_path": rel,
+        "shot_num": sn,
+        "url": f"/api/projects/{proj_id}/files/{rel}",
+    }
+
+
+@app.delete("/api/episodes/{episode_id}/shots/{shot_num}/image")
+def api_delete_shot_image(episode_id: str, shot_num: int):
+    """删除分镜图；删除后可重新上传。"""
+    try:
+        ep = services.get_episode(episode_id)
+    except KeyError:
+        raise HTTPException(404, "集不存在")
+    if int(shot_num) < 1:
+        raise HTTPException(400, "镜号无效")
+    proj_id = ep["project_id"]
+    dest_dir = db.project_dir(proj_id) / "episodes" / f"ep{ep['ep_num']:02d}" / "shots"
+    removed = []
+    for p in dest_dir.glob(f"shot_{int(shot_num):02d}.*"):
+        if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"):
+            try:
+                p.unlink()
+                removed.append(p.name)
+            except OSError:
+                pass
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE shots SET image_path='' WHERE episode_id=? AND shot_num=?",
+            (episode_id, int(shot_num)),
+        )
+    return {"ok": True, "shot_num": int(shot_num), "removed": removed}
 
 
 @app.post("/api/episodes/{episode_id}/fix-orientation")

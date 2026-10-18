@@ -23,12 +23,15 @@ web/data/sfx_cache/
 web/output/
 *.log
 
-# 本地运维/探测脚本（含服务器凭证或硬编码路径，勿提交）
+# 本地运维/探测脚本与输出（含服务器凭证或硬编码路径，勿提交）
 _ssh_*.py
 _fetch_*.py
 _test_comfy_api*.py
 web/_*.py
+web/_*.txt
+web/_*.json
 web/scripts/_*.py
+web/scripts/_*.txt
 
 # IDE / OS
 .idea/

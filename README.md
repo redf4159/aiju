@@ -53,20 +53,21 @@
 ├── 05_分镜脚本/              # 每集镜头表（景别、动作、时长）
 ├── 06_分镜Prompt/            # ComfyUI/通用文生图用英文 Prompt
 ├── 07_图生视频单镜脚本/      # 每镜独立：时长≤15s + 运动描述 + 台词
-├── web/                      # Web 制作台源码（**仅部署在服务器** `/home/linux/bingjing/web`）
-├── deploy/                   # 同步脚本（可选）
-└── comfyui/                  # 工作流参考 + 补丁说明（已同步至服务器 `/home/linux/bingjing/comfyui`）
+├── web/                      # Web 制作台源码
+├── deploy/                   # 换机部署：INSTALL.md、systemd、env.example
+└── comfyui/                  # Drama10 节点参考 + 工作流 JSON
 ```
 
-## 线上访问（无本地服务）
+**换服务器 / 换 GPU**：见 [`deploy/INSTALL.md`](deploy/INSTALL.md)。  
+Git：`https://github.com/redf4159/aiju`
+
+## 线上访问
 
 | 服务 | 地址 |
 |------|------|
-| **冰镜制作台** | `http://175.155.64.171:61951`（对内 8001） |
-| ComfyUI | `http://175.155.64.171:61950` |
-
-服务器目录：`/home/linux/bingjing/`（web、comfyui、assets、project 剧本与分镜）
-```
+| **冰镜制作台** | https://dj.preview.3swl.com/ |
+| 预览机代码 | `/opt/ai-forge/bingjing/web` |
+| GPU Comfy | 见制作台 `COMFYUI_URL` / `deploy/INSTALL.md` |
 
 ## 中文短剧 vs 文件里的英文
 

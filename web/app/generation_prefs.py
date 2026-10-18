@@ -6,10 +6,16 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-LIVE_ACTION_BASE = (
+LIVE_ACTION_BASE_LANDSCAPE = (
     "真人写实电影摄影，自然光影，电影级景深，"
     "横屏16比9构图，地平线水平，禁止画面旋转"
 )
+LIVE_ACTION_BASE_PORTRAIT = (
+    "真人写实电影摄影，自然光影，电影级景深，"
+    "竖屏9比16全屏构图，主体 upright，禁止横屏宽荧幕与上下黑边"
+)
+# 兼容旧引用
+LIVE_ACTION_BASE = LIVE_ACTION_BASE_LANDSCAPE
 LIVE_ACTION_CHARACTER = "真实中国演员面孔与肤质，人物朝向自然"
 LIVE_ACTION_PREFIX = f"{LIVE_ACTION_BASE}，{LIVE_ACTION_CHARACTER}"
 
@@ -43,14 +49,101 @@ FACE_SHOT_HINT = (
     "电影剧照，真人面孔五官端正对称，双眼清晰，皮肤自然，"
     "中近景或标准特写（避免极端大特写导致变形）"
 )
+ILLUSTRATION_FACE_HINT = (
+    "卡通角色面部五官端正清晰，圆润线条，中近景或标准特写，"
+    "避免极端大特写导致变形，保持本剧画风一致"
+)
+
+
+def project_art_style_guide(art_style: str = "") -> str:
+    """按本剧画风生成自然风格说明（资产/分镜/视频共用，非禁令口吻）。"""
+    style = (art_style or "").strip()
+    if not style:
+        return ""
+    try:
+        from .asset_sheet_prompts import default_style_line
+
+        # 与角色设定图同一套画风描述，保证全片一致
+        return f"画风：{default_style_line('character', style)}"
+    except Exception:
+        return f"画风：{style}，全片视觉风格保持一致"
+
+
+# 兼容旧名
+def art_style_still_lock(art_style: str = "") -> str:
+    return project_art_style_guide(art_style)
+
+
+def strip_conflicting_look_phrases(text: str, *, art_style: str = "") -> str:
+    """去掉与本剧画风冲突的默认真人/旧国漫残留；并清理旧版「硬性」措辞。"""
+    import re
+
+    t = text or ""
+    # 清理旧版强制口吻
+    t = re.sub(r"【画风硬性】", "画风：", t)
+    t = re.sub(r"严禁半写实3D国漫[、，]?", "", t)
+    t = re.sub(r"严禁真人写实皮肤毛孔[、，]?", "", t)
+    t = re.sub(r"严禁成人冷峻五官与写实电影感[。．]?", "", t)
+    t = re.sub(r"严禁真人写真[、，]?", "", t)
+    t = re.sub(r"严禁半写实3D国漫成人脸[。．]?", "", t)
+    if not is_illustration_art_style(art_style):
+        t = re.sub(r"[，,]{2,}", "，", t)
+        return t.strip("，, \n")
+    for bad in (
+        "真人写实电影摄影，自然光影，电影级景深，竖屏9比16全屏构图，主体 upright，禁止横屏宽荧幕与上下黑边，",
+        "真人写实电影摄影，自然光影，电影级景深，横屏16比9构图，地平线水平，禁止画面旋转，",
+        "真人写实电影摄影，自然光影，电影级景深，",
+        "真实中国演员面孔与肤质，人物朝向自然，",
+        "真实中国演员面孔与肤质，人物朝向自然",
+        "真人写实电影摄影",
+        "照片级真实，",
+        "照片级真实",
+        "真实摄影机实拍效果，",
+        "真实摄影机实拍效果",
+        "电影剧照，真人面孔五官端正对称，双眼清晰，皮肤自然，",
+        "电影级景深，",
+        "轻微胶片颗粒，",
+        "半写实3D国漫，",
+        "半写实3D国漫",
+        "横屏16比9构图，主体 upright，地平线水平，禁止旋转90度，",
+        "横屏16比9构图，",
+        "横屏16比9，",
+        "真人电影质感，照片级真实，东方玄幻电影风格，细腻自然的人物皮肤与面部细节，",
+        "真实摄影机实拍效果，浅景深，柔和电影光影，轻微胶片颗粒，真实空间纵深，高级电影调色。",
+    ):
+        t = t.replace(bad, "")
+    t = re.sub(r"真人写实[^，。；;\n]{0,24}", "", t)
+    t = re.sub(r"[，,]{2,}", "，", t)
+    return t.strip("，, \n")
+
 
 VIDEO_SCENE_INTEGRATION = (
     "同一实拍摄影机连续拍摄：单一曝光与白平衡、统一胶片颗粒与大气透视；"
     "人物完全处在场景三维空间内，脚下接地阴影、环境反射与背景色温一致，"
     "景深光学连续，边缘无硬切无描边光晕；"
-    "同场连续镜保持同一空间母版与人物左右站位轴，对白时朝向对方而非镜头；"
+    "同场连续镜保持同一空间母版与人物形象一致，机位角度可变，对白可看向对方或正脸对镜头；"
     "严禁抠像、严禁绿幕合成感、严禁人物前景层贴背景、严禁两层分离合成或贴纸感"
 )
+
+
+def look_mode_for_style(art_style: str = "", prefs: Optional[Dict[str, Any]] = None) -> str:
+    """本剧画风决定 look：卡通/国漫走 illustration，其余才用 live_action。"""
+    prefs = prefs or {}
+    if is_illustration_art_style(art_style, prefs):
+        return "illustration"
+    look = (prefs.get("look") or "live_action").strip() or "live_action"
+    if look == "auto":
+        return "live_action"
+    return look
+
+
+def video_integration_for_style(art_style: str = "") -> str:
+    if is_illustration_art_style(art_style):
+        return (
+            "同一画风连续镜头：光影色调、人物比例与服装前后镜一致，"
+            "动作自然衔接，不要中途换画风、换脸或换成真人写实。"
+        )
+    return VIDEO_SCENE_INTEGRATION
 
 PORTRAIT_HINT = "横屏16比9构图，主体 upright，地平线水平，禁止旋转90度"
 VERTICAL_HINT = (
@@ -224,38 +317,117 @@ def _is_crowd_wide_shot(visual: str) -> bool:
     return any(x in v for x in ("万民", "群像", "跪拜", "群臣", "中远景", "广角"))
 
 
-def style_prefix_for_shot(visual: str, proj_style: str, prefs: Dict[str, Any]) -> str:
-    """按镜头区分：空镜/远景不加「演员面孔」类前缀。"""
+def is_portrait_canvas(width: int = 0, height: int = 0) -> bool:
+    try:
+        return int(height or 0) > int(width or 0)
+    except (TypeError, ValueError):
+        return False
+
+
+def is_illustration_art_style(proj_style: str = "", prefs: Optional[Dict[str, Any]] = None) -> bool:
+    """卡通/国漫/萌系等非真人写实画风：勿注入「横屏真人」前缀与禁卡通负面。"""
+    prefs = prefs or {}
+    blob = f"{proj_style or ''} {prefs.get('extra_prefix') or ''}"
+    return any(
+        k in blob
+        for k in (
+            "萌",
+            "卡通",
+            "国漫",
+            "二次元",
+            "Q版",
+            "q版",
+            "插画",
+            "水墨",
+            "像素",
+            "黏土",
+            "赛璐珞",
+            "童趣",
+        )
+    )
+
+
+def live_action_base_for_canvas(width: int = 0, height: int = 0) -> str:
+    return (
+        LIVE_ACTION_BASE_PORTRAIT
+        if is_portrait_canvas(width, height)
+        else LIVE_ACTION_BASE_LANDSCAPE
+    )
+
+
+def style_prefix_for_shot(
+    visual: str,
+    proj_style: str,
+    prefs: Dict[str, Any],
+    *,
+    width: int = 0,
+    height: int = 0,
+) -> str:
+    """本剧画风优先；真人 look 仅在非插画画风时附加。"""
     parts: list[str] = []
-    if prefs.get("look") == "live_action":
-        parts.append(LIVE_ACTION_BASE)
+    guide = project_art_style_guide(proj_style)
+    if guide:
+        parts.append(guide)
+    elif (proj_style or "").strip():
+        parts.append(proj_style.strip())
+    look = look_mode_for_style(proj_style, prefs)
+    if look == "live_action":
+        parts.append(live_action_base_for_canvas(width, height))
         if _is_establishing_shot(visual):
             parts.append(ESTABLISHING_STYLE)
         elif _is_crowd_wide_shot(visual):
             parts.append(CROWD_WIDE_HINT)
         else:
             parts.append(LIVE_ACTION_CHARACTER)
-    if (proj_style or "").strip():
-        parts.append(proj_style.strip())
     if (prefs.get("extra_prefix") or "").strip():
         parts.append(prefs["extra_prefix"].strip())
     if (prefs.get("global_memory") or "").strip():
         parts.append(prefs["global_memory"].strip())
+    if is_portrait_canvas(width, height):
+        parts.append("竖屏9比16全屏构图")
+    elif int(width or 0) > 0 and int(height or 0) > 0:
+        parts.append("横屏16比9构图")
     return "，".join(p for p in parts if p)
 
 
-def effective_style(style_prefix: str, prefs: Dict[str, Any]) -> Tuple[str, str]:
-    """整集默认风格（含人物向前缀）；单镜出图请用 style_prefix_for_shot。"""
+def effective_style(
+    style_prefix: str,
+    prefs: Dict[str, Any],
+    *,
+    width: int = 0,
+    height: int = 0,
+) -> Tuple[str, str]:
+    """整集默认风格：以本剧 style_prefix 为准。"""
     parts = []
-    if prefs.get("look") == "live_action":
-        parts.append(LIVE_ACTION_PREFIX)
-    if (style_prefix or "").strip():
+    guide = project_art_style_guide(style_prefix)
+    if guide:
+        parts.append(guide)
+    elif (style_prefix or "").strip():
         parts.append(style_prefix.strip())
+    look = look_mode_for_style(style_prefix, prefs)
+    if look == "live_action":
+        base = live_action_base_for_canvas(width, height)
+        parts.append(f"{base}，{LIVE_ACTION_CHARACTER}")
     if (prefs.get("extra_prefix") or "").strip():
         parts.append(prefs["extra_prefix"].strip())
     if (prefs.get("global_memory") or "").strip():
         parts.append(prefs["global_memory"].strip())
     neg = (prefs.get("negative_prompt") or DEFAULT_NEGATIVE).strip()
+    illustration = look_mode_for_style(style_prefix, prefs) == "illustration"
+    if illustration:
+        for bad in (
+            "禁止动漫、卡通、二次元、插画、赛璐璐、3D游戏渲染感、Q版、",
+            "禁止动漫,卡通,二次元,插画,赛璐璐,3D游戏渲染感,Q版,",
+            "横屏错误、",
+            "横屏错误,",
+        ):
+            neg = neg.replace(bad, "")
+        # 按画风排除冲突项，而不是堆叠禁令口号
+        if any(k in (style_prefix or "") for k in ("萌", "卡通", "Q版", "q版", "童趣")):
+            extra = "半写实成人国漫, 真人写实皮肤, 冷峻成人脸"
+            neg = f"{neg}，{extra}" if neg else extra
+        if is_portrait_canvas(width, height):
+            neg = f"{neg}，横屏宽荧幕 letterbox" if neg else "横屏宽荧幕 letterbox"
     return "，".join(parts), neg
 
 
@@ -286,11 +458,20 @@ def _needs_phone_screen_hint(visual: str) -> bool:
 
 
 def apply_negative_to_visual(
-    visual: str, negative: str, *, establishing: Optional[bool] = None
+    visual: str,
+    negative: str,
+    *,
+    establishing: Optional[bool] = None,
+    width: int = 0,
+    height: int = 0,
 ) -> str:
     v = (visual or "").strip()
     est = _is_establishing_shot(v) if establishing is None else establishing
-    vertical = _is_vertical_visual(v)
+    # 项目画布优先；无宽高时才回退到文案关键词
+    if int(width or 0) > 0 and int(height or 0) > 0:
+        vertical = is_portrait_canvas(width, height)
+    else:
+        vertical = _is_vertical_visual(v)
     if est:
         hint = LANDSCAPE_HINT if not vertical else (
             "竖屏9比16环境构图，地平线水平，禁止镜像翻转，禁止旋转90度，空镜无人物"
@@ -299,6 +480,14 @@ def apply_negative_to_visual(
         hint = VERTICAL_HINT if vertical else PORTRAIT_HINT
     if not v:
         return f"{hint}。{negative}"
+    # 竖屏项目去掉已烘焙的横屏措辞
+    if vertical:
+        for bad, good in (
+            ("横屏16比9构图", "竖屏9比16构图"),
+            ("横屏16比9", "竖屏9比16"),
+            ("横屏 16:9", "竖屏 9:16"),
+        ):
+            v = v.replace(bad, good)
     if (
         hint not in v
         and PORTRAIT_HINT not in v

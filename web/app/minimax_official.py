@@ -73,6 +73,27 @@ def clamp_duration(seconds: float, *, model: Optional[str] = None) -> int:
     return max(4, min(15, d))
 
 
+def rescale_voice_start_sec(
+    start_sec: float,
+    *,
+    planned_duration: float,
+    actual_duration: float,
+) -> float:
+    """时长被 API 压短时，按「距片尾」比例重映射起念点，避免前半段空窗错乱。"""
+    try:
+        st = float(start_sec)
+    except (TypeError, ValueError):
+        st = 0.6
+    plan = max(0.1, float(planned_duration or actual_duration or 6))
+    act = max(0.1, float(actual_duration or plan))
+    if abs(plan - act) < 0.35:
+        return max(0.3, min(st, max(0.3, act - 0.8)))
+    # 保留相对片尾的位置：原 22s 的 13.8s 起 → 尾段 8.2s；压到 15s 后约 6.8s 起
+    tail = max(0.0, plan - st)
+    mapped = act - tail
+    return max(0.3, min(mapped, max(0.3, act - 0.8)))
+
+
 def _enforce_ref_audio_max_sec(path: Path, *, max_sec: float = REF_AUDIO_MAX_SEC) -> Path:
     """强制参考音频 ≤ max_sec，避免上传后被 MiniMax 以 2013 拒收。"""
     import subprocess
@@ -200,36 +221,56 @@ def build_compact_shot_prompt(
     except Exception:
         amb = (ambience or shot.get("ambience") or shot.get("sound") or "").strip()
     if not amb:
-        amb = "quiet open office room tone, soft air, distant soft keyboard clicks"
+        amb = "quiet natural outdoor/room tone, soft wind, no speech"
     visual = _brief_visual(shot.get("visual") or "")
     motion = _brief_motion(shot.get("motion") or shot.get("camera") or "")
+
+    planned_dur = float(shot.get("duration_sec") or 6)
+    # 调用方若已写入 actual_duration_sec（压片后），用它重映射起念点
+    try:
+        actual_dur = float(shot.get("actual_duration_sec") or planned_dur)
+    except (TypeError, ValueError):
+        actual_dur = planned_dur
 
     lines: List[str] = [
         # 官方写法：结构英文，台词保留中文
         "Soundtrack (required, clear and audible):",
     ]
     narr = False
+    earliest = None
     if not voices:
-        lines.append("- Ambience only; no dialogue. Keep lips closed.")
+        lines.append("- Ambience only; no dialogue. Keep lips closed. No murmuring or gibberish.")
     for v in voices:
         role = (v.get("role") or "旁白").strip()
         text = (v.get("text") or "").strip()
         try:
-            st = float(v.get("start_sec") if v.get("start_sec") is not None else 0.6)
+            st_raw = float(v.get("start_sec") if v.get("start_sec") is not None else 0.6)
         except (TypeError, ValueError):
-            st = 0.6
+            st_raw = 0.6
+        st = rescale_voice_start_sec(
+            st_raw, planned_duration=planned_dur, actual_duration=actual_dur
+        )
+        earliest = st if earliest is None else min(earliest, st)
         if role in ("旁白", "OS", "os", "narrator", "Narrator"):
             narr = True
             lines.append(
-                f'- A young Chinese woman says in an off-screen voiceover in Chinese '
-                f'starting near {st:.1f}s: "{text}" '
-                "while all on-screen characters keep lips completely closed."
+                f'- Off-screen young Mandarin voiceover (do NOT speak any name) '
+                f'starts exactly at {st:.1f}s and speaks ONLY: 「{text}」. '
+                "On-screen lips stay closed."
             )
         else:
             lines.append(
-                f'- {role} speaks on-screen in Chinese starting near {st:.1f}s: "{text}" '
-                "with natural lip sync; other characters stay silent."
+                f'- On-screen child/character (identity={role}, do NOT pronounce the name) '
+                f'starts speaking Mandarin exactly at {st:.1f}s and speaks ONLY: 「{text}」 '
+                "with natural lip sync; others silent with closed lips."
             )
+
+    if voices and earliest is not None and earliest > 0.8:
+        lines.append(
+            f"- CRITICAL TIMING: From 0.0s to {earliest:.1f}s there must be ZERO speech — "
+            "no words, no whispering, no humming lyrics, no unclear babble. "
+            f"Only soft ambience until {earliest:.1f}s, then the quoted line."
+        )
 
     lines.append(
         f"- Continuous ambient bed under the speech: {amb}. "
@@ -238,19 +279,21 @@ def build_compact_shot_prompt(
     )
     if voices:
         lines.append(
-            "- Speak clearly at a natural, unhurried Chinese pace "
-            "(about 3 to 3.5 characters per second). "
-            "Leave short pauses between lines; do not rush, overlap, or cram dialogue."
+            "- Speak at a normal conversational Mandarin pace "
+            "(about 4.5 to 5.5 Chinese characters per second). "
+            "Do NOT speak slowly or drag syllables; keep natural clarity, "
+            "short pauses only between sentences."
         )
     if with_ref_audio and voices:
         lines.append(
-            "- Follow reference Audio 1 for spoken lines and voice timbre; "
+            "- Follow reference Audio 1 for spoken lines, timing and voice timbre; "
             "keep the ambient bed present for the full duration."
         )
     else:
         lines.append(
             "- Generate the spoken Chinese lines and ambience in the video audio track; "
-            "do not output silent video or ambience-only when dialogue is specified."
+            "do not output silent video or ambience-only when dialogue is specified; "
+            "do not invent extra lines beyond the quoted text."
         )
 
     lines.append("Visual:")
@@ -259,8 +302,8 @@ def build_compact_shot_prompt(
     else:
         lines.append("- Follow the reference image composition exactly.")
     lines.append(
-        "- Vertical Chinese manhua anime style, cold office light, "
-        "exact match to the reference frame identity and framing."
+        "- Match the reference frame art style, identity and framing exactly; "
+        "single continuous shot."
     )
 
     lines.append("Camera:")
@@ -895,6 +938,27 @@ def generate_shot_i2v(
         except json.JSONDecodeError:
             voices = []
 
+    planned_dur = float(duration_sec or shot.get("duration_sec") or 6)
+    dur = clamp_duration(planned_dur)
+    # 压片后重映射起念点，再组装提示（避免 22s→15s 时前半段乱说话）
+    voices = [
+        {
+            **v,
+            "start_sec": rescale_voice_start_sec(
+                float(v.get("start_sec") if v.get("start_sec") is not None else 0.6),
+                planned_duration=planned_dur,
+                actual_duration=float(dur),
+            ),
+        }
+        for v in voices
+    ]
+    shot = {
+        **shot,
+        "duration_sec": planned_dur,
+        "actual_duration_sec": float(dur),
+        "voices": voices,
+    }
+
     # 默认 False：只让 MiniMax 出声，避免「本地 TTS 参考 + 模型自带对白」叠成多重声
     use_ref_audio = bool(with_speech and voices and _want_ref_audio())
     amb = _sanitize_amb_for_h3(
@@ -924,7 +988,6 @@ def generate_shot_i2v(
         except Exception as e:
             if on_progress:
                 on_progress(f"MiniMax · 附加图跳过：{e}"[:100])
-    dur = clamp_duration(duration_sec)
 
     if use_ref_audio:
         if on_progress:
